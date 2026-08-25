@@ -10,18 +10,66 @@ import type { AppView, Habit, HabitRecord } from './types'
 import { countThisWeek, formatJapaneseDate, formatShortDate, frequencyLabel, getStreak, getWeekDates, isDueToday, percentage, todayISO, toISODate } from './utils'
 
 const STORAGE_KEY = 'habit-helper-local-v1'
+const NOTIFICATION_HISTORY_KEY = 'habit-helper-notification-history-v1'
 
-type StoredState = { habits: Habit[]; records: HabitRecord[] }
+type NotificationPermission = 'default' | 'granted' | 'denied' | 'unsupported'
+type StoredState = { habits: Habit[]; records: HabitRecord[]; notificationsEnabled: boolean }
+const starterReminderTimes: Record<string, string> = { water: '09:00', workout: '18:00', english: '20:00', stretch: '22:00' }
+
+const normalizeHabit = (habit: Habit): Habit => ({
+  ...habit,
+  reminderEnabled: habit.reminderEnabled ?? true,
+  reminderTime: habit.reminderTime ?? starterReminderTimes[habit.id] ?? '20:00',
+})
+
+const getDefaultState = (): StoredState => ({
+  habits: starterHabits.map(normalizeHabit),
+  records: starterRecords,
+  notificationsEnabled: false,
+})
 
 const readStoredState = (): StoredState => {
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored) return JSON.parse(stored) as StoredState
+    if (stored) {
+      const parsed = JSON.parse(stored) as Partial<StoredState>
+      return {
+        habits: Array.isArray(parsed.habits) ? parsed.habits.map(normalizeHabit) : getDefaultState().habits,
+        records: Array.isArray(parsed.records) ? parsed.records : getDefaultState().records,
+        notificationsEnabled: parsed.notificationsEnabled ?? false,
+      }
+    }
   } catch {
     // Local storage is optional for this first prototype.
   }
-  return { habits: starterHabits, records: starterRecords }
+  return getDefaultState()
 }
+
+const getNotificationPermission = (): NotificationPermission => {
+  if (!('Notification' in window)) return 'unsupported'
+  return window.Notification.permission
+}
+
+const readNotificationHistory = () => {
+  try {
+    const stored = localStorage.getItem(NOTIFICATION_HISTORY_KEY)
+    const parsed = stored ? JSON.parse(stored) : []
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+const rememberNotification = (key: string) => {
+  const history = readNotificationHistory().filter((item) => item !== key).slice(-199)
+  try {
+    localStorage.setItem(NOTIFICATION_HISTORY_KEY, JSON.stringify([...history, key]))
+  } catch {
+    // Notification history is optional; it only prevents duplicate reminders.
+  }
+}
+
+const currentTime = (date = new Date()) => `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 
 const getTone = (index: number): Habit['tone'] => (['mint', 'peach', 'lavender', 'sky', 'yellow'] as const)[index % 5]
 
@@ -31,6 +79,7 @@ function App() {
   const [selectedHabitId, setSelectedHabitId] = useState<string | null>(null)
   const [editingHabitId, setEditingHabitId] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(getNotificationPermission)
 
   const { habits, records } = state
   const today = todayISO()
@@ -45,6 +94,38 @@ function App() {
       // The UI remains usable if storage is unavailable.
     }
   }, [state])
+
+  useEffect(() => {
+    if (notificationPermission !== 'granted' || !state.notificationsEnabled) return
+
+    const notifyDueHabits = () => {
+      const now = new Date()
+      const time = currentTime(now)
+      const date = toISODate(now)
+      const history = new Set(readNotificationHistory())
+
+      state.habits
+        .filter((habit) => habit.reminderEnabled && habit.reminderTime === time && isDueToday(habit, now))
+        .filter((habit) => !state.records.some((record) => record.habitId === habit.id && record.completedDate === date))
+        .forEach((habit) => {
+          const key = `${date}:${habit.id}:${time}`
+          if (history.has(key)) return
+          const notification = new window.Notification(`習慣の時間です · ${habit.name}`, {
+            body: '小さく始めよう。今日の習慣を記録しましょう。',
+            tag: `habit-helper-${habit.id}`,
+          })
+          notification.onclick = () => {
+            window.focus()
+            notification.close()
+          }
+          rememberNotification(key)
+        })
+    }
+
+    notifyDueHabits()
+    const timer = window.setInterval(notifyDueHabits, 15000)
+    return () => window.clearInterval(timer)
+  }, [notificationPermission, state.notificationsEnabled, state.habits, state.records])
 
   useEffect(() => {
     if (!notice) return
@@ -102,6 +183,7 @@ function App() {
     const habit = habits.find((item) => item.id === habitId)
     if (!habit || !window.confirm(`「${habit.name}」を削除しますか？`)) return
     setState((current) => ({
+      ...current,
       habits: current.habits.filter((item) => item.id !== habitId),
       records: current.records.filter((record) => record.habitId !== habitId),
     }))
@@ -112,9 +194,42 @@ function App() {
 
   const resetDemo = () => {
     if (!window.confirm('デモデータを初期状態に戻しますか？')) return
-    setState({ habits: starterHabits, records: starterRecords })
+    setState(getDefaultState())
     setActiveView('home')
     setNotice('デモデータをリセットしました')
+  }
+
+  const enableNotifications = async () => {
+    if (notificationPermission === 'unsupported') {
+      setNotice('このブラウザは通知に対応していません')
+      return
+    }
+    const permission = await window.Notification.requestPermission()
+    setNotificationPermission(permission)
+    if (permission === 'granted') {
+      setState((current) => ({ ...current, notificationsEnabled: true }))
+      setNotice('通知を有効にしました')
+    } else if (permission === 'denied') {
+      setNotice('通知がブロックされています。ブラウザの設定を確認してください')
+    }
+  }
+
+  const disableNotifications = () => {
+    setState((current) => ({ ...current, notificationsEnabled: false }))
+    setNotice('通知を停止しました')
+  }
+
+  const sendTestNotification = () => {
+    if (notificationPermission !== 'granted') return
+    const notification = new window.Notification('Habit Helper', {
+      body: '通知は正常に動作しています。習慣をひとつ続けてみましょう。',
+      tag: 'habit-helper-test',
+    })
+    notification.onclick = () => {
+      window.focus()
+      notification.close()
+    }
+    setNotice('テスト通知を送りました')
   }
 
   const selectedHabit = habits.find((habit) => habit.id === selectedHabitId)
@@ -157,7 +272,7 @@ function App() {
         {activeView === 'habits' && <HabitsView habits={habits} records={records} onToggle={toggleCompletion} onOpen={openDetail} onAdd={() => navigate('create')} />}
         {activeView === 'create' && <PageFrame eyebrow={editingHabit ? 'EDIT HABIT' : 'NEW HABIT'} title={editingHabit ? '習慣を整える' : '新しい習慣をつくる'} description={editingHabit ? '今のあなたに合うように、いつでも調整できます。' : '続けたいことをひとつだけ。小さく始めるのがコツです。'}><HabitForm initialHabit={editingHabit} onSubmit={saveHabit} onCancel={() => editingHabit ? openDetail(editingHabit.id) : navigate('home')} /></PageFrame>}
         {activeView === 'detail' && selectedHabit && <DetailView habit={selectedHabit} records={records} onBack={() => navigate('habits')} onToggle={() => toggleCompletion(selectedHabit.id)} onEdit={() => { setEditingHabitId(selectedHabit.id); setActiveView('create') }} onDelete={() => deleteHabit(selectedHabit.id)} />}
-        {activeView === 'settings' && <SettingsView onReset={resetDemo} />}
+        {activeView === 'settings' && <SettingsView onReset={resetDemo} notificationsEnabled={state.notificationsEnabled} notificationPermission={notificationPermission} onEnableNotifications={enableNotifications} onDisableNotifications={disableNotifications} onTestNotification={sendTestNotification} />}
 
         <BottomNavigation activeView={activeView} onNavigate={navigate} />
         {notice && <div className="toast" role="status"><span aria-hidden="true">✦</span>{notice}</div>}
@@ -240,8 +355,25 @@ function Stat({ label, value, accent }: { label: string; value: string; accent: 
   return <div className={`stat-card stat-card--${accent}`}><span>{label}</span><strong>{value}</strong></div>
 }
 
-function SettingsView({ onReset }: { onReset: () => void }) {
-  return <PageFrame eyebrow="PREFERENCES" title="設定" description="Habit Helperをあなたのペースに合わせて整えます。"><div className="settings-card"><div className="settings-profile"><span className="profile-avatar profile-avatar--large">S</span><div><strong>さきさん</strong><span>自分の習慣を楽しむ人</span></div><span className="settings-status">ローカル保存中</span></div><div className="settings-row"><div><strong>データについて</strong><span>今はこの端末だけで使える仮データモードです。</span></div><span className="settings-row__arrow">›</span></div><div className="settings-row"><div><strong>通知</strong><span>通知機能は次のステップで追加予定です。</span></div><span className="settings-soon">COMING SOON</span></div><div className="settings-row"><div><strong>アカウント</strong><span>ログイン・新規登録はDB接続時に追加します。</span></div><span className="settings-soon">COMING SOON</span></div><button className="reset-button" onClick={onReset}>デモデータを初期状態に戻す</button></div></PageFrame>
+type SettingsViewProps = {
+  onReset: () => void
+  notificationsEnabled: boolean
+  notificationPermission: NotificationPermission
+  onEnableNotifications: () => void
+  onDisableNotifications: () => void
+  onTestNotification: () => void
+}
+
+function SettingsView({ onReset, notificationsEnabled, notificationPermission, onEnableNotifications, onDisableNotifications, onTestNotification }: SettingsViewProps) {
+  const notificationDescription = notificationPermission === 'unsupported'
+    ? 'このブラウザは通知に対応していません。'
+    : notificationPermission === 'denied'
+      ? '通知がブロックされています。ブラウザの設定から許可してください。'
+      : notificationsEnabled
+        ? '習慣ごとに設定した時間に通知します。'
+        : '通知を許可すると、習慣の時間にお知らせします。'
+
+  return <PageFrame eyebrow="PREFERENCES" title="設定" description="Habit Helperをあなたのペースに合わせて整えます。"><div className="settings-card"><div className="settings-profile"><span className="profile-avatar profile-avatar--large">S</span><div><strong>さきさん</strong><span>自分の習慣を楽しむ人</span></div><span className="settings-status">ローカル保存中</span></div><div className="settings-row"><div><strong>データについて</strong><span>今はこの端末だけで使える仮データモードです。</span></div><span className="settings-row__arrow">›</span></div><div className="settings-row settings-row--notifications"><div><strong>習慣の通知</strong><span>{notificationDescription}</span></div><div className="notification-actions">{notificationsEnabled && notificationPermission === 'granted' ? <><button className="button button--ghost button--small" onClick={onDisableNotifications}>通知を停止</button><button className="button button--secondary button--small" onClick={onTestNotification}>テスト通知</button></> : <button className="button button--primary button--small" onClick={onEnableNotifications} disabled={notificationPermission === 'unsupported'}>通知を有効にする</button>}</div></div><p className="notification-note">通知はこの端末のブラウザ上で、アプリを開いている間に動作します。習慣ごとの時刻は習慣の編集画面から変更できます。</p><div className="settings-row"><div><strong>アカウント</strong><span>ログイン・新規登録はDB接続時に追加します。</span></div><span className="settings-soon">COMING SOON</span></div><button className="reset-button" onClick={onReset}>デモデータを初期状態に戻す</button></div></PageFrame>
 }
 
 function EmptyHabits({ onAdd }: { onAdd: () => void }) {

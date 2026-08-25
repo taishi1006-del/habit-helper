@@ -28,6 +28,7 @@ export function HabitCard({ habit, records, completed, onToggle, onOpen }: Habit
             ) : (
               <span className="habit-card__streak">🔥 {streak}日継続</span>
             )}
+            {habit.reminderEnabled && habit.reminderTime && <span className="habit-card__reminder">🔔 {habit.reminderTime}</span>}
           </span>
         </span>
         <span className="habit-card__chevron" aria-hidden="true">›</span>

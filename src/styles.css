@@ -125,6 +125,7 @@ h1, h2, h3, p { margin-top: 0; }
 .habit-card__meta { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: #9aa3a5; font-size: 10px; }
 .habit-card__streak { color: #c19a64; }
 .habit-card__streak--week { color: var(--purple); }
+.habit-card__reminder { color: #8d91c8; }
 .habit-card__chevron { padding-left: 5px; color: #b6bebd; font-size: 21px; font-weight: 300; }
 .complete-button { display: inline-flex; align-items: center; justify-content: center; min-width: 81px; padding: 10px 12px; border: 1px solid #dedfe8; border-radius: 10px; background: white; color: #858c96; font-size: 10px; font-weight: 700; transition: .2s ease; white-space: nowrap; }
 .complete-button:hover { border-color: var(--purple); color: var(--purple); }
@@ -164,6 +165,9 @@ h1, h2, h3, p { margin-top: 0; }
 .text-input:focus, .select-input:focus, .date-input:focus { border-color: #aaa5ef; box-shadow: 0 0 0 3px rgba(110,103,232,.08); }
 .text-input--large { padding: 15px; font-size: 16px; }
 .select-input, .date-input { width: auto; min-width: 136px; }
+.time-input { width: 136px; min-height: 42px; padding: 10px 12px; border: 1px solid #e2e7e2; border-radius: 11px; outline: 0; background: #fff; color: var(--ink); font-size: 12px; transition: .2s ease; }
+.time-input:focus { border-color: #aaa5ef; box-shadow: 0 0 0 3px rgba(110,103,232,.08); }
+.time-input:disabled { cursor: not-allowed; background: #f3f5f2; color: #b0b8b8; }
 .icon-picker { display: flex; flex-wrap: wrap; gap: 8px; }
 .icon-picker button { display: inline-flex; align-items: center; justify-content: center; width: 39px; height: 39px; padding: 0; border: 1px solid #e3e8e3; border-radius: 11px; background: white; font-size: 19px; transition: .2s ease; }
 .icon-picker button:hover, .icon-picker button.is-selected { border-color: #aba6ec; background: #f0efff; transform: translateY(-2px); }
@@ -178,6 +182,20 @@ h1, h2, h3, p { margin-top: 0; }
 .day-picker button.is-selected { border-color: var(--purple); background: var(--purple); color: white; }
 .form-error { margin: -8px 0 17px; color: #d36c63; font-size: 11px; }
 .form-actions { display: flex; justify-content: flex-end; gap: 9px; padding-top: 5px; border-top: 1px solid #edf0ec; }
+.reminder-form-section { padding: 17px 16px 16px; border: 1px solid #e7e9f5; border-radius: 14px; background: #fafaff; }
+.reminder-toggle-row, .reminder-time-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.reminder-toggle-row .form-label { margin-bottom: 4px; }
+.reminder-time-row { margin-top: 16px; }
+.form-hint { display: block; color: #a0a7a8; font-size: 10px; line-height: 1.6; }
+.reminder-form-section > .form-hint { margin: 12px 0 0; }
+.switch-control { position: relative; display: inline-flex; flex-shrink: 0; cursor: pointer; }
+.switch-control input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.switch-control__track { display: inline-flex; align-items: center; width: 44px; height: 26px; padding: 3px; border-radius: 20px; background: #d8ddda; transition: .2s ease; }
+.switch-control__track span { width: 20px; height: 20px; border-radius: 50%; background: white; box-shadow: 0 2px 5px rgba(40, 49, 45, .14); transition: .2s ease; }
+.switch-control input:checked + .switch-control__track { background: var(--purple); }
+.switch-control input:checked + .switch-control__track span { transform: translateX(18px); }
+.switch-control input:focus-visible + .switch-control__track { outline: 3px solid rgba(110,103,232,.2); outline-offset: 2px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 .back-button { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 18px; padding: 0; border: 0; background: none; color: #929b9d; font-size: 11px; }
 .back-button:hover { color: var(--purple); }
@@ -223,6 +241,12 @@ h1, h2, h3, p { margin-top: 0; }
 .settings-row > div { display: grid; gap: 5px; }
 .settings-row strong { color: #4f5b5e; font-size: 11px; }
 .settings-row span { color: #a0a9aa; font-size: 10px; }
+.settings-row--notifications { align-items: flex-start; }
+.settings-row--notifications > div:first-child { min-width: 0; }
+.settings-row--notifications > div:first-child span { line-height: 1.55; }
+.notification-actions { display: flex !important; flex-wrap: wrap; justify-content: flex-end; gap: 7px !important; }
+.notification-actions .button { white-space: nowrap; }
+.notification-note { margin: 13px 0 0; color: #a0a9aa; font-size: 10px; line-height: 1.7; }
 .settings-row__arrow { color: #b0b8b8; font-size: 21px; }
 .settings-soon { color: #b4aeea !important; font-size: 8px !important; font-weight: 800; letter-spacing: .08em; white-space: nowrap; }
 .reset-button { margin-top: 21px; padding: 0; border: 0; background: transparent; color: #b3abad; font-size: 10px; text-decoration: underline; }
@@ -295,6 +319,8 @@ h1, h2, h3, p { margin-top: 0; }
   .frequency-options button { grid-template-columns: 1fr 1fr; align-items: center; }
   .form-section--inline { align-items: flex-start; flex-direction: column; gap: 9px; }
   .form-section--inline .select-input, .form-section--inline .date-input { width: 100%; }
+  .reminder-toggle-row, .reminder-time-row { align-items: flex-start; flex-direction: column; gap: 9px; }
+  .reminder-time-row .time-input { width: 100%; }
   .form-actions { display: grid; grid-template-columns: 1fr 1.35fr; position: sticky; bottom: 0; margin: 0 -17px -20px; padding: 14px 17px; background: rgba(255,255,255,.95); }
   .form-actions .button { min-height: 44px; }
   .detail-hero { align-items: flex-start; flex-wrap: wrap; padding: 20px; }
@@ -310,6 +336,9 @@ h1, h2, h3, p { margin-top: 0; }
   .calendar-grid__labels, .calendar-grid__days { gap: 3px; }
   .calendar-day { min-height: 35px; }
   .settings-card { padding-left: 17px; padding-right: 17px; }
+  .settings-row--notifications { flex-direction: column; gap: 13px; }
+  .notification-actions { width: 100%; justify-content: stretch !important; }
+  .notification-actions .button { flex: 1; }
   .settings-profile { align-items: flex-start; flex-wrap: wrap; }
   .settings-status { width: 100%; margin-left: 0; text-align: center; }
   .bottom-navigation { position: fixed; right: 12px; bottom: max(10px, env(safe-area-inset-bottom)); left: 12px; z-index: 9; display: grid; grid-template-columns: repeat(4, 1fr); padding: 6px; border: 1px solid rgba(231,235,230,.92); border-radius: 17px; background: rgba(255,255,255,.92); box-shadow: 0 14px 30px rgba(30, 48, 39, .12); backdrop-filter: blur(13px); }

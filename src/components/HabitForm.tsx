@@ -17,6 +17,8 @@ export function HabitForm({ initialHabit, onSubmit, onCancel }: HabitFormProps) 
   const [frequencyType, setFrequencyType] = useState<FrequencyType>(initialHabit?.frequencyType ?? 'daily')
   const [targetPerWeek, setTargetPerWeek] = useState(initialHabit?.targetPerWeek ?? 4)
   const [selectedDays, setSelectedDays] = useState<number[]>(initialHabit?.selectedDays ?? [1, 3, 5])
+  const [reminderEnabled, setReminderEnabled] = useState(initialHabit?.reminderEnabled ?? true)
+  const [reminderTime, setReminderTime] = useState(initialHabit?.reminderTime ?? '20:00')
   const [startDate, setStartDate] = useState(initialHabit?.startDate ?? new Date().toISOString().slice(0, 10))
   const [error, setError] = useState('')
 
@@ -26,6 +28,8 @@ export function HabitForm({ initialHabit, onSubmit, onCancel }: HabitFormProps) 
     setFrequencyType(initialHabit?.frequencyType ?? 'daily')
     setTargetPerWeek(initialHabit?.targetPerWeek ?? 4)
     setSelectedDays(initialHabit?.selectedDays ?? [1, 3, 5])
+    setReminderEnabled(initialHabit?.reminderEnabled ?? true)
+    setReminderTime(initialHabit?.reminderTime ?? '20:00')
     setStartDate(initialHabit?.startDate ?? new Date().toISOString().slice(0, 10))
   }, [initialHabit])
 
@@ -50,6 +54,8 @@ export function HabitForm({ initialHabit, onSubmit, onCancel }: HabitFormProps) 
       frequencyType,
       targetPerWeek: frequencyType === 'weekly' ? targetPerWeek : undefined,
       selectedDays: frequencyType === 'selected_days' ? selectedDays : undefined,
+      reminderEnabled,
+      reminderTime,
       startDate,
       tone: initialHabit?.tone ?? 'mint',
     })
@@ -119,6 +125,25 @@ export function HabitForm({ initialHabit, onSubmit, onCancel }: HabitFormProps) 
       <div className="form-section form-section--inline">
         <label className="form-label" htmlFor="start-date">開始日</label>
         <input id="start-date" type="date" className="date-input" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+      </div>
+
+      <div className="form-section reminder-form-section">
+        <div className="reminder-toggle-row">
+          <div>
+            <span className="form-label">習慣のリマインダー</span>
+            <span className="form-hint">設定した時間にブラウザからお知らせします。</span>
+          </div>
+          <label className="switch-control">
+            <input type="checkbox" checked={reminderEnabled} onChange={(event) => setReminderEnabled(event.target.checked)} />
+            <span className="switch-control__track" aria-hidden="true"><span /></span>
+            <span className="sr-only">この習慣の通知を受け取る</span>
+          </label>
+        </div>
+        <div className="reminder-time-row">
+          <label className="form-label" htmlFor="reminder-time">通知時刻</label>
+          <input id="reminder-time" type="time" className="time-input" value={reminderTime} disabled={!reminderEnabled} onChange={(event) => setReminderTime(event.target.value)} />
+        </div>
+        <p className="form-hint">アプリを開いている間に通知されます。まず設定画面で通知を許可してください。</p>
       </div>
 
       {error && <p className="form-error" role="alert">{error}</p>}

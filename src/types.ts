@@ -7,6 +7,8 @@ export type Habit = {
   frequencyType: FrequencyType
   targetPerWeek?: number
   selectedDays?: number[]
+  reminderEnabled?: boolean
+  reminderTime?: string
   startDate: string
   createdAt: string
   tone: 'mint' | 'peach' | 'lavender' | 'sky' | 'yellow'
