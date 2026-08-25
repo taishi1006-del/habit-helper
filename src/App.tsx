@@ -13,14 +13,20 @@ const STORAGE_KEY = 'habit-helper-local-v1'
 const NOTIFICATION_HISTORY_KEY = 'habit-helper-notification-history-v1'
 
 type NotificationPermission = 'default' | 'granted' | 'denied' | 'unsupported'
-type StoredState = { habits: Habit[]; records: HabitRecord[]; notificationsEnabled: boolean; dailyGoal: number }
+type StoredState = { habits: Habit[]; records: HabitRecord[]; notificationsEnabled: boolean; dailyGoal: number; displayName: string }
 type Celebration = { name: string; icon: string }
 const DEFAULT_DAILY_GOAL = 3
+const DEFAULT_DISPLAY_NAME = 'さき'
 const starterReminderTimes: Record<string, string> = { water: '09:00', workout: '18:00', english: '20:00', stretch: '22:00' }
 
 const normalizeDailyGoal = (value: unknown) => {
   if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_DAILY_GOAL
   return Math.min(20, Math.max(1, Math.round(value)))
+}
+
+const normalizeDisplayName = (value: unknown) => {
+  if (typeof value !== 'string' || !value.trim()) return DEFAULT_DISPLAY_NAME
+  return value.trim().slice(0, 20)
 }
 
 const normalizeHabit = (habit: Habit): Habit => ({
@@ -34,6 +40,7 @@ const getDefaultState = (): StoredState => ({
   records: starterRecords,
   notificationsEnabled: false,
   dailyGoal: DEFAULT_DAILY_GOAL,
+  displayName: DEFAULT_DISPLAY_NAME,
 })
 
 const readStoredState = (): StoredState => {
@@ -46,6 +53,7 @@ const readStoredState = (): StoredState => {
         records: Array.isArray(parsed.records) ? parsed.records : getDefaultState().records,
         notificationsEnabled: parsed.notificationsEnabled ?? false,
         dailyGoal: normalizeDailyGoal(parsed.dailyGoal),
+        displayName: normalizeDisplayName(parsed.displayName),
       }
     }
   } catch {
@@ -241,6 +249,10 @@ function App() {
     setState((current) => ({ ...current, dailyGoal: normalizeDailyGoal(value) }))
   }
 
+  const updateDisplayName = (value: string) => {
+    setState((current) => ({ ...current, displayName: value.slice(0, 20) }))
+  }
+
   const sendTestNotification = () => {
     if (notificationPermission !== 'granted') return
     const notification = new window.Notification('Habit Helper', {
@@ -256,6 +268,7 @@ function App() {
 
   const selectedHabit = habits.find((habit) => habit.id === selectedHabitId)
   const editingHabit = habits.find((habit) => habit.id === editingHabitId)
+  const displayNameInitial = state.displayName.slice(0, 1)
 
   return (
     <div className="app-shell">
@@ -285,8 +298,8 @@ function App() {
           <div className="topbar__mobile-brand"><span className="brand-mark">hh</span><strong>Habit Helper</strong></div>
           <div className="topbar__spacer" />
           <div className="topbar__profile">
-            <div className="profile-copy"><strong>こんにちは、さきさん</strong><span>今日もいい一日にしよう</span></div>
-            <span className="profile-avatar">S</span>
+            <div className="profile-copy"><strong>こんにちは、{state.displayName}さん</strong><span>今日もいい一日にしよう</span></div>
+            <span className="profile-avatar">{displayNameInitial}</span>
           </div>
         </header>
 
@@ -294,7 +307,7 @@ function App() {
         {activeView === 'habits' && <HabitsView habits={habits} records={records} onToggle={toggleCompletion} onOpen={openDetail} onAdd={() => navigate('create')} />}
         {activeView === 'create' && <PageFrame eyebrow={editingHabit ? 'EDIT HABIT' : 'NEW HABIT'} title={editingHabit ? '習慣を整える' : '新しい習慣をつくる'} description={editingHabit ? '今のあなたに合うように、いつでも調整できます。' : '続けたいことをひとつだけ。小さく始めるのがコツです。'}><HabitForm initialHabit={editingHabit} onSubmit={saveHabit} onCancel={() => editingHabit ? openDetail(editingHabit.id) : navigate('home')} /></PageFrame>}
         {activeView === 'detail' && selectedHabit && <DetailView habit={selectedHabit} records={records} onBack={() => navigate('habits')} onToggle={() => toggleCompletion(selectedHabit.id)} onEdit={() => { setEditingHabitId(selectedHabit.id); setActiveView('create') }} onDelete={() => deleteHabit(selectedHabit.id)} />}
-        {activeView === 'settings' && <SettingsView onReset={resetDemo} dailyGoal={state.dailyGoal} onDailyGoalChange={updateDailyGoal} notificationsEnabled={state.notificationsEnabled} notificationPermission={notificationPermission} onEnableNotifications={enableNotifications} onDisableNotifications={disableNotifications} onTestNotification={sendTestNotification} />}
+        {activeView === 'settings' && <SettingsView displayName={state.displayName} onDisplayNameChange={updateDisplayName} onReset={resetDemo} dailyGoal={state.dailyGoal} onDailyGoalChange={updateDailyGoal} notificationsEnabled={state.notificationsEnabled} notificationPermission={notificationPermission} onEnableNotifications={enableNotifications} onDisableNotifications={disableNotifications} onTestNotification={sendTestNotification} />}
 
         <BottomNavigation activeView={activeView} onNavigate={navigate} />
         {celebration && <CelebrationOverlay celebration={celebration} />}
@@ -391,6 +404,8 @@ function Stat({ label, value, accent }: { label: string; value: string; accent: 
 }
 
 type SettingsViewProps = {
+  displayName: string
+  onDisplayNameChange: (value: string) => void
   onReset: () => void
   dailyGoal: number
   onDailyGoalChange: (value: number) => void
@@ -401,7 +416,7 @@ type SettingsViewProps = {
   onTestNotification: () => void
 }
 
-function SettingsView({ onReset, dailyGoal, onDailyGoalChange, notificationsEnabled, notificationPermission, onEnableNotifications, onDisableNotifications, onTestNotification }: SettingsViewProps) {
+function SettingsView({ displayName, onDisplayNameChange, onReset, dailyGoal, onDailyGoalChange, notificationsEnabled, notificationPermission, onEnableNotifications, onDisableNotifications, onTestNotification }: SettingsViewProps) {
   const notificationDescription = notificationPermission === 'unsupported'
     ? 'このブラウザは通知に対応していません。'
     : notificationPermission === 'denied'
@@ -410,7 +425,7 @@ function SettingsView({ onReset, dailyGoal, onDailyGoalChange, notificationsEnab
         ? '習慣ごとに設定した時間に通知します。'
         : '通知を許可すると、習慣の時間にお知らせします。'
 
-  return <PageFrame eyebrow="PREFERENCES" title="設定" description="Habit Helperをあなたのペースに合わせて整えます。"><div className="settings-card"><div className="settings-profile"><span className="profile-avatar profile-avatar--large">S</span><div><strong>さきさん</strong><span>自分の習慣を楽しむ人</span></div><span className="settings-status">ローカル保存中</span></div><div className="settings-row"><div><strong>データについて</strong><span>今はこの端末だけで使える仮データモードです。</span></div><span className="settings-row__arrow">›</span></div><div className="settings-row settings-row--goal"><div><strong>今日のリズムの目標</strong><span>進捗リングに表示する、1日の目標習慣数です。</span></div><label className="goal-control"><input className="goal-input" type="number" min="1" max="20" value={dailyGoal} onChange={(event) => onDailyGoalChange(Number(event.target.value))} /><span>習慣</span></label></div><div className="settings-row settings-row--notifications"><div><strong>習慣の通知</strong><span>{notificationDescription}</span></div><div className="notification-actions">{notificationsEnabled && notificationPermission === 'granted' ? <><button className="button button--ghost button--small" onClick={onDisableNotifications}>通知を停止</button><button className="button button--secondary button--small" onClick={onTestNotification}>テスト通知</button></> : <button className="button button--primary button--small" onClick={onEnableNotifications} disabled={notificationPermission === 'unsupported'}>通知を有効にする</button>}</div></div><p className="notification-note">通知はこの端末のブラウザ上で、アプリを開いている間に動作します。習慣ごとの時刻は習慣の編集画面から変更できます。</p><div className="settings-row"><div><strong>アカウント</strong><span>ログイン・新規登録はDB接続時に追加します。</span></div><span className="settings-soon">COMING SOON</span></div><button className="reset-button" onClick={onReset}>デモデータを初期状態に戻す</button></div></PageFrame>
+  return <PageFrame eyebrow="PREFERENCES" title="設定" description="Habit Helperをあなたのペースに合わせて整えます。"><div className="settings-card"><div className="settings-profile"><span className="profile-avatar profile-avatar--large">{displayName.slice(0, 1)}</span><div><strong>{displayName}さん</strong><span>自分の習慣を楽しむ人</span></div><span className="settings-status">ローカル保存中</span></div><div className="settings-row settings-row--name"><div><strong>表示名</strong><span>ホーム画面の挨拶に表示する名前です。</span></div><input className="name-input" type="text" value={displayName} maxLength={20} aria-label="表示名" onChange={(event) => onDisplayNameChange(event.target.value)} /></div><div className="settings-row"><div><strong>データについて</strong><span>今はこの端末だけで使える仮データモードです。</span></div><span className="settings-row__arrow">›</span></div><div className="settings-row settings-row--goal"><div><strong>今日のリズムの目標</strong><span>進捗リングに表示する、1日の目標習慣数です。</span></div><label className="goal-control"><input className="goal-input" type="number" min="1" max="20" value={dailyGoal} onChange={(event) => onDailyGoalChange(Number(event.target.value))} /><span>習慣</span></label></div><div className="settings-row settings-row--notifications"><div><strong>習慣の通知</strong><span>{notificationDescription}</span></div><div className="notification-actions">{notificationsEnabled && notificationPermission === 'granted' ? <><button className="button button--ghost button--small" onClick={onDisableNotifications}>通知を停止</button><button className="button button--secondary button--small" onClick={onTestNotification}>テスト通知</button></> : <button className="button button--primary button--small" onClick={onEnableNotifications} disabled={notificationPermission === 'unsupported'}>通知を有効にする</button>}</div></div><p className="notification-note">通知はこの端末のブラウザ上で、アプリを開いている間に動作します。習慣ごとの時刻は習慣の編集画面から変更できます。</p><div className="settings-row"><div><strong>アカウント</strong><span>ログイン・新規登録はDB接続時に追加します。</span></div><span className="settings-soon">COMING SOON</span></div><button className="reset-button" onClick={onReset}>デモデータを初期状態に戻す</button></div></PageFrame>
 }
 
 function EmptyHabits({ onAdd }: { onAdd: () => void }) {
