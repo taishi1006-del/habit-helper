@@ -244,6 +244,10 @@ h1, h2, h3, p { margin-top: 0; }
 .settings-row--notifications { align-items: flex-start; }
 .settings-row--notifications > div:first-child { min-width: 0; }
 .settings-row--notifications > div:first-child span { line-height: 1.55; }
+.settings-row--goal { align-items: center; }
+.goal-control { display: inline-flex; align-items: center; flex-shrink: 0; gap: 8px; color: #8f9898; font-size: 11px; font-weight: 700; }
+.goal-input { width: 68px; min-height: 42px; padding: 9px 8px; border: 1px solid #e2e7e2; border-radius: 11px; outline: 0; background: #fff; color: var(--purple-dark); font-size: 16px; font-weight: 800; text-align: center; }
+.goal-input:focus { border-color: #aaa5ef; box-shadow: 0 0 0 3px rgba(110,103,232,.08); }
 .notification-actions { display: flex !important; flex-wrap: wrap; justify-content: flex-end; gap: 7px !important; }
 .notification-actions .button { white-space: nowrap; }
 .notification-note { margin: 13px 0 0; color: #a0a9aa; font-size: 10px; line-height: 1.7; }
@@ -364,6 +368,7 @@ h1, h2, h3, p { margin-top: 0; }
   .calendar-grid__labels, .calendar-grid__days { gap: 3px; }
   .calendar-day { min-height: 35px; }
   .settings-card { padding-left: 17px; padding-right: 17px; }
+  .settings-row--goal { align-items: flex-start; }
   .settings-row--notifications { flex-direction: column; gap: 13px; }
   .notification-actions { width: 100%; justify-content: stretch !important; }
   .notification-actions .button { flex: 1; }
