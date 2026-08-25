@@ -329,6 +329,7 @@ function HomeView({ habits, allHabits, records, completedToday, dailyGoal, progr
   const week = getWeekDates()
   const weekTotal = habits.reduce((total, habit) => total + countThisWeek(habit.id, records), 0)
   const bestHabit = allHabits.slice().sort((a, b) => getStreak(b, records) - getStreak(a, records))[0]
+  const bestStreak = bestHabit ? getStreak(bestHabit, records) : 0
 
   return <div className="home-view">
     <div className="date-strip"><span className="date-strip__dot" aria-hidden="true" />今日 · {formatJapaneseDate()}</div>
@@ -336,6 +337,16 @@ function HomeView({ habits, allHabits, records, completedToday, dailyGoal, progr
     <section className="welcome-row">
       <div><h1>おかえりなさい。<br /><em>今日も一歩ずつ。</em></h1></div>
       <button className="button button--primary button--add" onClick={onAdd}><span aria-hidden="true">＋</span> 習慣を追加</button>
+    </section>
+
+    <section className="streak-summary" aria-label={`続いている日数 ${bestStreak}日`}>
+      <span className="streak-summary__icon" aria-hidden="true">🔥</span>
+      <div className="streak-summary__copy">
+        <span className="eyebrow">YOUR STREAK</span>
+        <div className="streak-summary__value"><strong>{bestStreak}</strong><span>日続いています</span></div>
+        <p>{bestStreak > 0 && bestHabit ? `「${bestHabit.name}」の記録` : '今日から小さく始めよう'}</p>
+      </div>
+      <span className="streak-summary__spark" aria-hidden="true">✦</span>
     </section>
 
     <section className="section-block today-section">
