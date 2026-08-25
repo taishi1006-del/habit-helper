@@ -1,0 +1,20 @@
+{
+  "name": "Habit Helper — 小さな習慣を、毎日の力に。",
+  "short_name": "Habit Helper",
+  "description": "毎日の小さな習慣を続けるためのHabit Helper",
+  "lang": "ja",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f7f8f4",
+  "theme_color": "#6e67e8",
+  "icons": [
+    {
+      "src": "/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

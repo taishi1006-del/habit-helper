@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Habit Helper</title>
+  <desc id="desc">Habit Helperのhhロゴを使ったアプリアイコン</desc>
+  <defs>
+    <linearGradient id="background" x1="44" y1="24" x2="468" y2="500" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8F88F5" />
+      <stop offset="1" stop-color="#5C55C8" />
+    </linearGradient>
+    <linearGradient id="card" x1="112" y1="82" x2="398" y2="432" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" />
+      <stop offset="1" stop-color="#F0F4FF" />
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#40399D" flood-opacity=".22" />
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#background)" />
+  <circle cx="420" cy="88" r="82" fill="#CFF2DF" opacity=".42" />
+  <circle cx="82" cy="432" r="108" fill="#FFD8C7" opacity=".26" />
+  <path d="M62 160c52-62 113-92 184-92" fill="none" stroke="#FFF" stroke-linecap="round" stroke-width="8" opacity=".22" />
+  <rect x="76" y="76" width="360" height="360" rx="104" fill="url(#card)" filter="url(#shadow)" />
+  <circle cx="376" cy="137" r="13" fill="#79C499" />
+  <path d="m370 137 5 5 9-11" fill="none" stroke="#FFF" stroke-linecap="round" stroke-linejoin="round" stroke-width="4" />
+  <text x="256" y="318" fill="#6E67E8" font-family="Arial, Helvetica, sans-serif" font-size="178" font-weight="800" letter-spacing="-22" text-anchor="middle">hh</text>
+  <circle cx="137" cy="145" r="8" fill="#F2B39F" />
+  <circle cx="155" cy="128" r="4" fill="#F2B39F" opacity=".75" />
+</svg>
