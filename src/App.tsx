@@ -14,6 +14,7 @@ const NOTIFICATION_HISTORY_KEY = 'habit-helper-notification-history-v1'
 
 type NotificationPermission = 'default' | 'granted' | 'denied' | 'unsupported'
 type StoredState = { habits: Habit[]; records: HabitRecord[]; notificationsEnabled: boolean }
+type Celebration = { name: string; icon: string }
 const starterReminderTimes: Record<string, string> = { water: '09:00', workout: '18:00', english: '20:00', stretch: '22:00' }
 
 const normalizeHabit = (habit: Habit): Habit => ({
@@ -79,6 +80,7 @@ function App() {
   const [selectedHabitId, setSelectedHabitId] = useState<string | null>(null)
   const [editingHabitId, setEditingHabitId] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
+  const [celebration, setCelebration] = useState<Celebration | null>(null)
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(getNotificationPermission)
 
   const { habits, records } = state
@@ -133,6 +135,12 @@ function App() {
     return () => window.clearTimeout(timeout)
   }, [notice])
 
+  useEffect(() => {
+    if (!celebration) return
+    const timeout = window.setTimeout(() => setCelebration(null), 2600)
+    return () => window.clearTimeout(timeout)
+  }, [celebration])
+
   const navigate = (view: AppView) => {
     setActiveView(view)
     if (view !== 'detail') setSelectedHabitId(null)
@@ -146,12 +154,14 @@ function App() {
 
   const toggleCompletion = (habitId: string) => {
     const existing = records.find((record) => record.habitId === habitId && record.completedDate === today)
+    const habit = habits.find((item) => item.id === habitId)
     setState((current) => ({
       ...current,
       records: existing
         ? current.records.filter((record) => record.id !== existing.id)
         : [...current.records, { id: `${habitId}-${today}`, habitId, completedDate: today, createdAt: new Date().toISOString() }],
     }))
+    if (!existing && habit) setCelebration({ name: habit.name, icon: habit.icon })
     setNotice(existing ? '完了を取り消しました' : '今日の習慣を記録しました ✓')
   }
 
@@ -275,6 +285,7 @@ function App() {
         {activeView === 'settings' && <SettingsView onReset={resetDemo} notificationsEnabled={state.notificationsEnabled} notificationPermission={notificationPermission} onEnableNotifications={enableNotifications} onDisableNotifications={disableNotifications} onTestNotification={sendTestNotification} />}
 
         <BottomNavigation activeView={activeView} onNavigate={navigate} />
+        {celebration && <CelebrationOverlay celebration={celebration} />}
         {notice && <div className="toast" role="status"><span aria-hidden="true">✦</span>{notice}</div>}
       </main>
     </div>
@@ -378,6 +389,25 @@ function SettingsView({ onReset, notificationsEnabled, notificationPermission, o
 
 function EmptyHabits({ onAdd }: { onAdd: () => void }) {
   return <div className="empty-state"><span className="empty-state__icon">✦</span><h3>最初の習慣をつくろう</h3><p>続けたいことをひとつ選んで、<br />今日から始めてみませんか？</p><button className="button button--primary" onClick={onAdd}>習慣を追加する →</button></div>
+}
+
+function CelebrationOverlay({ celebration }: { celebration: Celebration }) {
+  const confetti = ['✦', '•', '◆', '✧', '●', '＋', '✦', '•', '◆', '✧']
+
+  return <div className="celebration" role="status" aria-live="polite" aria-label={`${celebration.name}を完了しました`}>
+    <div className="celebration__backdrop" aria-hidden="true" />
+    <div className="celebration__confetti" aria-hidden="true">
+      {confetti.map((item, index) => <span key={`${item}-${index}`} className={`celebration__confetti-piece celebration__confetti-piece--${index + 1}`}>{item}</span>)}
+    </div>
+    <div className="celebration__card">
+      <span className="celebration__icon" aria-hidden="true">{celebration.icon}</span>
+      <span className="eyebrow">WELL DONE</span>
+      <h2>「{celebration.name}」達成！</h2>
+      <p>今日も一歩、前に進みました。</p>
+      <span className="celebration__star celebration__star--one" aria-hidden="true">✦</span>
+      <span className="celebration__star celebration__star--two" aria-hidden="true">✦</span>
+    </div>
+  </div>
 }
 
 export default App

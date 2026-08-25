@@ -258,6 +258,34 @@ h1, h2, h3, p { margin-top: 0; }
 .empty-state p { margin-bottom: 18px; color: #9da5a5; font-size: 11px; line-height: 1.8; }
 .toast { position: fixed; right: 29px; bottom: 30px; z-index: 10; display: inline-flex; align-items: center; gap: 9px; padding: 12px 16px; border: 1px solid #d9e8dd; border-radius: 12px; background: #f4fff6; box-shadow: 0 13px 30px rgba(31, 66, 42, .12); color: #4f8e69; font-size: 11px; animation: toast-in .25s ease both; }
 .toast span { color: #73b48b; }
+.celebration { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; pointer-events: none; }
+.celebration__backdrop { position: absolute; inset: 0; background: rgba(91, 85, 200, .12); animation: celebration-fade .3s ease both; }
+.celebration__card { position: relative; display: grid; justify-items: center; width: min(330px, calc(100vw - 40px)); padding: 31px 24px 28px; overflow: hidden; border: 1px solid rgba(255,255,255,.9); border-radius: 26px; background: rgba(255,255,255,.96); box-shadow: 0 24px 65px rgba(64, 58, 157, .22); text-align: center; animation: celebration-pop .55s cubic-bezier(.2, 1.35, .35, 1) both; }
+.celebration__card::before { position: absolute; top: -80px; left: 50%; width: 190px; height: 150px; border-radius: 50%; background: #efeeff; content: ''; transform: translateX(-50%); }
+.celebration__icon { position: relative; display: grid; place-items: center; width: 74px; height: 74px; margin-bottom: 17px; border: 7px solid #f5f4ff; border-radius: 24px; background: linear-gradient(145deg, #8d86f1, #6962d7); box-shadow: 0 12px 23px rgba(96, 88, 207, .24); font-size: 36px; animation: celebration-bounce .75s .15s ease both; }
+.celebration__card .eyebrow { position: relative; color: #8b86dc; letter-spacing: .14em; }
+.celebration__card h2 { position: relative; margin: 9px 0 7px; color: var(--ink); font-family: Manrope, sans-serif; font-size: 22px; letter-spacing: -.06em; }
+.celebration__card p { position: relative; margin: 0; color: #96a0a0; font-size: 12px; }
+.celebration__star { position: absolute; color: #efb38e; font-size: 19px; animation: celebration-twinkle .8s ease-in-out infinite alternate; }
+.celebration__star--one { top: 39px; left: 49px; }
+.celebration__star--two { top: 68px; right: 48px; color: #82c79d; animation-delay: .25s; }
+.celebration__confetti { position: absolute; inset: 0; overflow: hidden; }
+.celebration__confetti-piece { position: absolute; top: 50%; left: 50%; color: var(--purple); font-size: 22px; opacity: 0; animation: celebration-confetti 1.55s .05s cubic-bezier(.15,.75,.3,1) both; }
+.celebration__confetti-piece--1 { --x: -155px; --y: -166px; --rotation: -210deg; color: #f0b19a; }
+.celebration__confetti-piece--2 { --x: -104px; --y: -218px; --rotation: 160deg; animation-delay: .08s; color: #7ac49a; }
+.celebration__confetti-piece--3 { --x: -42px; --y: -188px; --rotation: -120deg; animation-delay: .12s; color: #837cf0; }
+.celebration__confetti-piece--4 { --x: 41px; --y: -215px; --rotation: 145deg; animation-delay: .04s; color: #efb38e; }
+.celebration__confetti-piece--5 { --x: 116px; --y: -177px; --rotation: -155deg; animation-delay: .16s; color: #78bd95; }
+.celebration__confetti-piece--6 { --x: 164px; --y: -108px; --rotation: 220deg; animation-delay: .1s; color: #7770df; }
+.celebration__confetti-piece--7 { --x: -175px; --y: -76px; --rotation: 180deg; animation-delay: .19s; color: #7ac49a; }
+.celebration__confetti-piece--8 { --x: 181px; --y: -42px; --rotation: -190deg; animation-delay: .14s; color: #efb19a; }
+.celebration__confetti-piece--9 { --x: -121px; --y: 64px; --rotation: 135deg; animation-delay: .18s; color: #837cf0; }
+.celebration__confetti-piece--10 { --x: 131px; --y: 78px; --rotation: -145deg; animation-delay: .2s; color: #78bd95; }
+@keyframes celebration-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes celebration-pop { from { opacity: 0; transform: translateY(18px) scale(.78); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes celebration-bounce { 0% { transform: scale(.7) rotate(-8deg); } 65% { transform: scale(1.12) rotate(3deg); } 100% { transform: scale(1) rotate(0); } }
+@keyframes celebration-twinkle { from { opacity: .45; transform: scale(.8) rotate(-10deg); } to { opacity: 1; transform: scale(1.15) rotate(10deg); } }
+@keyframes celebration-confetti { 0% { opacity: 0; transform: translate(0, 0) rotate(0); } 12% { opacity: 1; } 100% { opacity: 0; transform: translate(var(--x), var(--y)) rotate(var(--rotation)); } }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 .bottom-navigation { display: none; }
 
@@ -346,6 +374,8 @@ h1, h2, h3, p { margin-top: 0; }
   .bottom-navigation button.is-active { background: #f0efff; color: var(--purple-dark); font-weight: 700; }
   .bottom-navigation__icon { font-size: 18px; line-height: 1; }
   .toast { right: 19px; bottom: 78px; left: 19px; justify-content: center; }
+  .celebration { padding: 15px; }
+  .celebration__card { padding: 27px 20px 25px; }
 }
 
 @media (max-width: 480px) {
@@ -393,4 +423,5 @@ h1, h2, h3, p { margin-top: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+  .celebration__confetti { display: none; }
 }
