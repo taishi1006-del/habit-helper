@@ -20,6 +20,7 @@ export type HabitRecord = {
   id: string
   habitId: string
   completedDate: string
+  note?: string
   createdAt: string
 }
 
