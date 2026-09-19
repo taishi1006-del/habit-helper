@@ -7,7 +7,7 @@ import { HabitForm } from './components/HabitForm'
 import { ProgressRing } from './components/ProgressRing'
 import { starterHabits, starterRecords } from './data'
 import type { AppView, Habit, HabitRecord } from './types'
-import { countThisWeek, formatJapaneseDate, formatShortDate, frequencyLabel, getLongestStreak, getMonday, getPeriodCompletionRate, getStreak, getWeekDates, getWeekdayCompletionRates, isDueToday, percentage, todayISO, toISODate } from './utils'
+import { countThisWeek, formatJapaneseDate, formatShortDate, frequencyLabel, getLongestStreak, getMonday, getPeriodCompletionRate, getPeriodProgress, getStreak, getSuggestedReminderTime, getWeekdayCompletionRates, isDueToday, percentage, todayISO, toISODate } from './utils'
 
 const STORAGE_KEY = 'habit-helper-local-v1'
 const NOTIFICATION_HISTORY_KEY = 'habit-helper-notification-history-v1'
@@ -17,7 +17,7 @@ const MAX_REMINDER_NOTIFICATIONS = 4
 type NotificationPermission = 'default' | 'granted' | 'denied' | 'unsupported'
 type StoredState = { habits: Habit[]; records: HabitRecord[]; notificationsEnabled: boolean; aiReflectionEnabled: boolean; dailyGoal: number; displayName: string }
 type Celebration = { name: string; icon: string }
-type NoteTarget = { habitId: string; date: string; name: string; initialNote: string }
+type NoteTarget = { habitId: string; date: string; name: string; initialNote: string; initialAmount?: number; targetValue?: number; targetUnit?: string }
 const DEFAULT_DAILY_GOAL = 3
 const DEFAULT_DISPLAY_NAME = 'さき'
 const starterReminderTimes: Record<string, string> = { water: '09:00', workout: '18:00', english: '20:00', stretch: '22:00' }
@@ -99,6 +99,30 @@ const timeToMinutes = (time: string) => {
 
 const getTone = (index: number): Habit['tone'] => (['mint', 'peach', 'lavender', 'sky', 'yellow'] as const)[index % 5]
 
+const getProgressInsights = (habits: Habit[], records: HabitRecord[], now = new Date()) => {
+  const weekStart = getMonday(now)
+  const previousWeekStart = new Date(weekStart)
+  previousWeekStart.setDate(previousWeekStart.getDate() - 7)
+  const previousWeekEnd = new Date(weekStart)
+  previousWeekEnd.setDate(previousWeekEnd.getDate() - 1)
+  const currentStreak = Math.max(0, ...habits.map((habit) => getStreak(habit, records)))
+  const longestStreak = Math.max(0, ...habits.map((habit) => getLongestStreak(habit, records)))
+  const weekProgress = getPeriodProgress(habits, records, weekStart, now)
+  const previousWeekProgress = getPeriodProgress(habits, records, previousWeekStart, previousWeekEnd)
+  const weekRate = weekProgress.rate
+  const previousWeekRate = previousWeekProgress.rate
+  const monthRate = getPeriodCompletionRate(habits, records, new Date(now.getFullYear(), now.getMonth(), 1), now)
+  const weekdayRates = getWeekdayCompletionRates(habits, records, now)
+  const last30Start = new Date(now)
+  last30Start.setDate(last30Start.getDate() - 29)
+  const habitRates = habits.map((habit) => ({ habit, rate: getPeriodCompletionRate([habit], records, last30Start, now) }))
+  const focusHabit = habitRates.slice().sort((a, b) => a.rate - b.rate)[0]
+  const focusDay = weekdayRates.filter((item) => item.target > 0).slice().sort((a, b) => a.rate - b.rate)[0]
+  const totalCompletions = records.filter((record) => habits.some((habit) => habit.id === record.habitId)).length
+  const levelName = longestStreak >= 30 ? '習慣マスター' : longestStreak >= 7 ? '初心者' : 'はじめの一歩'
+  return { weekStart, weekProgress, previousWeekProgress, weekRate, previousWeekRate, monthRate, currentStreak, longestStreak, weekdayRates, focusHabit, focusDay, totalCompletions, levelName }
+}
+
 function App() {
   const [state, setState] = useState<StoredState>(readStoredState)
   const [activeView, setActiveView] = useState<AppView>('home')
@@ -136,15 +160,16 @@ function App() {
         .filter((habit) => habit.reminderEnabled && habit.reminderTime && isDueToday(habit, now))
         .filter((habit) => !state.records.some((record) => record.habitId === habit.id && record.completedDate === date))
         .forEach((habit) => {
-          const reminderMinutes = timeToMinutes(habit.reminderTime ?? '')
+          const reminderTime = habit.smartReminder ? getSuggestedReminderTime(habit.id, state.records) ?? habit.reminderTime : habit.reminderTime
+          const reminderMinutes = timeToMinutes(reminderTime ?? '')
           if (reminderMinutes === null || currentMinutes < reminderMinutes) return
           const slot = Math.floor((currentMinutes - reminderMinutes) / REMINDER_REPEAT_MINUTES)
           if (slot >= MAX_REMINDER_NOTIFICATIONS) return
           const key = `${date}:${habit.id}:${slot}`
           if (history.has(key)) return
           const isFollowUp = slot > 0
-          const notification = new window.Notification(isFollowUp ? `まだ終わっていません · ${habit.name}` : `${habit.reminderTime} ${habit.name}の時間です`, {
-            body: isFollowUp ? `${habit.reminderTime}に予定していた習慣です。今日のうちに記録しましょう。` : '小さく始めよう。完了ボタンから達成を記録できます。',
+          const notification = new window.Notification(isFollowUp ? `まだ終わっていません · ${habit.name}` : `${reminderTime} ${habit.name}の時間です`, {
+            body: isFollowUp ? `${reminderTime}に予定していた習慣です。今日のうちに記録しましょう。` : '小さく始めよう。完了ボタンから達成を記録できます。',
             tag: `habit-helper-${habit.id}-${slot}`,
           })
           notification.onclick = () => {
@@ -183,29 +208,37 @@ function App() {
     setActiveView('detail')
   }
 
-  const toggleCompletion = (habitId: string) => {
-    const existing = records.find((record) => record.habitId === habitId && record.completedDate === today)
+  const toggleCompletion = (habitId: string, date = today) => {
+    if (date > today) {
+      setNotice('未来の日付は記録できません')
+      return
+    }
     const habit = habits.find((item) => item.id === habitId)
+    if (habit && !isDueToday(habit, new Date(`${date}T00:00:00`))) {
+      setNotice('この日は設定した実行日に含まれていません')
+      return
+    }
+    const existing = records.find((record) => record.habitId === habitId && record.completedDate === date)
     setState((current) => ({
       ...current,
       records: existing
         ? current.records.filter((record) => record.id !== existing.id)
-        : [...current.records, { id: `${habitId}-${today}`, habitId, completedDate: today, createdAt: new Date().toISOString() }],
+        : [...current.records, { id: `${habitId}-${date}`, habitId, completedDate: date, createdAt: new Date().toISOString() }],
     }))
-    if (!existing && habit) {
+    if (!existing && habit && date === today) {
       setCelebration({ name: habit.name, icon: habit.icon })
-      setNoteTarget({ habitId, date: today, name: habit.name, initialNote: '' })
+      setNoteTarget({ habitId, date: today, name: habit.name, initialNote: '', targetValue: habit.targetValue, targetUnit: habit.targetUnit })
     }
-    setNotice(existing ? '完了を取り消しました' : '今日の習慣を記録しました ✓ メモも残せます')
+    setNotice(existing ? `${date === today ? '今日' : formatShortDate(date)}の完了を取り消しました` : `${date === today ? '今日' : formatShortDate(date)}の達成を記録しました${date === today ? ' ✓ メモも残せます' : ''}`)
   }
 
-  const saveRecordNote = (note: string) => {
+  const saveRecordNote = (note: string, amount?: number) => {
     if (!noteTarget) return
     const trimmedNote = note.trim().slice(0, 120)
     setState((current) => ({
       ...current,
       records: current.records.map((record) => record.habitId === noteTarget.habitId && record.completedDate === noteTarget.date
-        ? { ...record, note: trimmedNote || undefined }
+        ? { ...record, note: trimmedNote || undefined, amount: amount && Number.isFinite(amount) ? amount : undefined }
         : record),
     }))
     setNoteTarget(null)
@@ -215,7 +248,8 @@ function App() {
   const openNoteEditor = (habitId: string, date: string, initialNote = '') => {
     const habit = habits.find((item) => item.id === habitId)
     if (!habit) return
-    setNoteTarget({ habitId, date, name: habit.name, initialNote })
+    const record = records.find((item) => item.habitId === habitId && item.completedDate === date)
+    setNoteTarget({ habitId, date, name: habit.name, initialNote, initialAmount: record?.amount, targetValue: habit.targetValue, targetUnit: habit.targetUnit })
   }
 
   const saveHabit = (values: Omit<Habit, 'id' | 'createdAt'>) => {
@@ -325,6 +359,7 @@ function App() {
         <nav className="sidebar__nav" aria-label="メインナビゲーション">
           <SidebarLink icon="⌂" label="ホーム" active={activeView === 'home'} onClick={() => navigate('home')} />
           <SidebarLink icon="◒" label="自分の習慣" active={activeView === 'habits' || activeView === 'detail'} onClick={() => navigate('habits')} />
+          <SidebarLink icon="▥" label="統計" active={activeView === 'stats'} onClick={() => navigate('stats')} />
           <SidebarLink icon="＋" label="習慣を追加" active={activeView === 'create'} onClick={() => navigate('create')} />
           <SidebarLink icon="⚙" label="設定" active={activeView === 'settings'} onClick={() => navigate('settings')} />
         </nav>
@@ -344,10 +379,11 @@ function App() {
           </div>
         </header>
 
-        {activeView === 'home' && <HomeView habits={dueHabits} allHabits={habits} records={records} completedToday={completedToday} dailyGoal={state.dailyGoal} progress={progress} aiReflectionEnabled={state.aiReflectionEnabled} onToggle={toggleCompletion} onOpen={openDetail} onAdd={() => navigate('create')} onViewAll={() => navigate('habits')} />}
+        {activeView === 'home' && <HomeView habits={dueHabits} allHabits={habits} records={records} completedToday={completedToday} dailyGoal={state.dailyGoal} progress={progress} onToggle={toggleCompletion} onOpen={openDetail} onAdd={() => navigate('create')} onViewAll={() => navigate('habits')} onViewStats={() => navigate('stats')} />}
         {activeView === 'habits' && <HabitsView habits={habits} records={records} onToggle={toggleCompletion} onOpen={openDetail} onAdd={() => navigate('create')} />}
-        {activeView === 'create' && <PageFrame eyebrow={editingHabit ? 'EDIT HABIT' : 'NEW HABIT'} title={editingHabit ? '習慣を整える' : '新しい習慣をつくる'} description={editingHabit ? '今のあなたに合うように、いつでも調整できます。' : '続けたいことをひとつだけ。小さく始めるのがコツです。'}><HabitForm initialHabit={editingHabit} onSubmit={saveHabit} onCancel={() => editingHabit ? openDetail(editingHabit.id) : navigate('home')} /></PageFrame>}
-        {activeView === 'detail' && selectedHabit && <DetailView habit={selectedHabit} records={records} onBack={() => navigate('habits')} onToggle={() => toggleCompletion(selectedHabit.id)} onEdit={() => { setEditingHabitId(selectedHabit.id); setActiveView('create') }} onEditNote={(record) => openNoteEditor(selectedHabit.id, record.completedDate, record.note ?? '')} onDelete={() => deleteHabit(selectedHabit.id)} />}
+        {activeView === 'stats' && <StatsView habits={habits} records={records} aiReflectionEnabled={state.aiReflectionEnabled} />}
+        {activeView === 'create' && <PageFrame eyebrow={editingHabit ? 'EDIT HABIT' : 'NEW HABIT'} title={editingHabit ? '習慣を整える' : '新しい習慣をつくる'} description={editingHabit ? '今のあなたに合うように、いつでも調整できます。' : '続けたいことをひとつだけ。小さく始めるのがコツです。'}><HabitForm initialHabit={editingHabit} records={records} onSubmit={saveHabit} onCancel={() => editingHabit ? openDetail(editingHabit.id) : navigate('home')} /></PageFrame>}
+        {activeView === 'detail' && selectedHabit && <DetailView habit={selectedHabit} records={records} onBack={() => navigate('habits')} onToggle={() => toggleCompletion(selectedHabit.id)} onToggleDate={(date) => toggleCompletion(selectedHabit.id, date)} onEdit={() => { setEditingHabitId(selectedHabit.id); setActiveView('create') }} onEditNote={(record) => openNoteEditor(selectedHabit.id, record.completedDate, record.note ?? '')} onDelete={() => deleteHabit(selectedHabit.id)} />}
         {activeView === 'settings' && <SettingsView displayName={state.displayName} onDisplayNameChange={updateDisplayName} onReset={resetDemo} dailyGoal={state.dailyGoal} onDailyGoalChange={updateDailyGoal} notificationsEnabled={state.notificationsEnabled} aiReflectionEnabled={state.aiReflectionEnabled} notificationPermission={notificationPermission} onEnableNotifications={enableNotifications} onDisableNotifications={disableNotifications} onTestNotification={sendTestNotification} onAiReflectionChange={updateAiReflection} />}
 
         <BottomNavigation activeView={activeView} onNavigate={navigate} />
@@ -374,41 +410,17 @@ type HomeViewProps = {
   completedToday: number
   dailyGoal: number
   progress: number
-  aiReflectionEnabled: boolean
   onToggle: (habitId: string) => void
   onOpen: (habitId: string) => void
   onAdd: () => void
   onViewAll: () => void
+  onViewStats: () => void
 }
 
-function HomeView({ habits, allHabits, records, completedToday, dailyGoal, progress, aiReflectionEnabled, onToggle, onOpen, onAdd, onViewAll }: HomeViewProps) {
-  const week = getWeekDates()
-  const weekTotal = habits.reduce((total, habit) => total + countThisWeek(habit.id, records), 0)
+function HomeView({ habits, allHabits, records, completedToday, dailyGoal, progress, onToggle, onOpen, onAdd, onViewAll, onViewStats }: HomeViewProps) {
   const bestHabit = allHabits.slice().sort((a, b) => getStreak(b, records) - getStreak(a, records))[0]
   const bestStreak = bestHabit ? getStreak(bestHabit, records) : 0
-  const currentStreak = Math.max(0, ...allHabits.map((habit) => getStreak(habit, records)))
-  const longestStreak = Math.max(0, ...allHabits.map((habit) => getLongestStreak(habit, records)))
-  const now = new Date()
-  const weekRate = getPeriodCompletionRate(allHabits, records, getMonday(now), now)
-  const monthRate = getPeriodCompletionRate(allHabits, records, new Date(now.getFullYear(), now.getMonth(), 1), now)
-  const weekdayRates = getWeekdayCompletionRates(allHabits, records, now)
-  const last30Start = new Date(now)
-  last30Start.setDate(last30Start.getDate() - 29)
-  const habitRates = allHabits.map((habit) => ({ habit, rate: getPeriodCompletionRate([habit], records, last30Start, now) }))
-  const focusHabit = habitRates.slice().sort((a, b) => a.rate - b.rate)[0]
-  const focusDay = weekdayRates.filter((item) => item.target > 0).slice().sort((a, b) => a.rate - b.rate)[0]
-  const totalCompletions = records.filter((record) => allHabits.some((habit) => habit.id === record.habitId)).length
-  const levelName = longestStreak >= 30 ? '習慣マスター' : longestStreak >= 7 ? '初心者' : 'はじめの一歩'
-  const achievements = [
-    { icon: '🌱', title: '初心者', detail: '7日継続', unlocked: longestStreak >= 7 },
-    { icon: '🏆', title: '習慣マスター', detail: '30日継続', unlocked: longestStreak >= 30 },
-    { icon: '🎯', title: '実績解除', detail: '100回達成', unlocked: totalCompletions >= 100 },
-  ]
-  const reflectionBody = focusHabit && focusDay
-    ? `「${focusHabit.habit.name}」は直近30日で${focusHabit.rate}%達成。${focusDay.label}曜日が${focusDay.rate}%と少し低めなので、その曜日だけ目標を軽くしてみると続けやすそうです。`
-    : focusHabit
-      ? `「${focusHabit.habit.name}」の直近30日の達成率は${focusHabit.rate}%です。無理のない小さな行動に分けて続けてみましょう。`
-      : '記録が増えると、あなたの続きやすい曜日やペースをここで振り返れます。'
+  const insights = getProgressInsights(allHabits, records)
 
   return <div className="home-view">
     <div className="date-strip"><span className="date-strip__dot" aria-hidden="true" />今日 · {formatJapaneseDate()}</div>
@@ -416,6 +428,13 @@ function HomeView({ habits, allHabits, records, completedToday, dailyGoal, progr
     <section className="welcome-row">
       <div><h1>おかえりなさい。<br /><em>今日も一歩ずつ。</em></h1></div>
       <button className="button button--primary button--add" onClick={onAdd}><span aria-hidden="true">＋</span> 習慣を追加</button>
+    </section>
+
+    <section className="section-block today-section">
+      <div className="section-heading"><div><span className="eyebrow">FOR TODAY</span><h2>今日やること</h2></div><button className="text-button" onClick={onViewAll}>すべて見る <span aria-hidden="true">→</span></button></div>
+      <div className="habit-stack">
+        {habits.length === 0 ? <EmptyHabits onAdd={onAdd} /> : habits.map((habit) => <HabitCard key={habit.id} habit={habit} records={records} completed={records.some((record) => record.habitId === habit.id && record.completedDate === todayISO())} onToggle={() => onToggle(habit.id)} onOpen={() => onOpen(habit.id)} />)}
+      </div>
     </section>
 
     <section className="streak-summary" aria-label={`続いている日数 ${bestStreak}日`}>
@@ -428,59 +447,50 @@ function HomeView({ habits, allHabits, records, completedToday, dailyGoal, progr
       <span className="streak-summary__spark" aria-hidden="true">✦</span>
     </section>
 
-    <section className="section-block today-section">
-      <div className="section-heading"><div><span className="eyebrow">FOR TODAY</span><h2>今日やること</h2></div><button className="text-button" onClick={onViewAll}>すべて見る <span aria-hidden="true">→</span></button></div>
-      <div className="habit-stack">
-        {habits.length === 0 ? <EmptyHabits onAdd={onAdd} /> : habits.map((habit) => <HabitCard key={habit.id} habit={habit} records={records} completed={records.some((record) => record.habitId === habit.id && record.completedDate === todayISO())} onToggle={() => onToggle(habit.id)} onOpen={() => onOpen(habit.id)} />)}
-      </div>
-    </section>
-
     <section className="progress-panel">
       <div className="progress-panel__copy"><span className="eyebrow eyebrow--light">TODAY'S PROGRESS</span><h2>今日のリズム</h2><p>{progress === 100 ? 'すべての習慣を達成しました。すてきです！' : 'ひとつずつ、できたことを積み重ねよう。'}</p><div className="progress-panel__count"><strong>{Math.min(completedToday, dailyGoal)}</strong><span> / {dailyGoal} habits</span></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div><span className="progress-panel__caption">{progress === 100 ? '今日の目標をクリア！' : `あと${Math.max(dailyGoal - completedToday, 0)}つで今日の目標達成`}</span></div>
       <ProgressRing completed={Math.min(completedToday, dailyGoal)} total={dailyGoal} />
       <span className="progress-spark progress-spark--one" /><span className="progress-spark progress-spark--two" /><span className="progress-spark progress-spark--three" />
     </section>
 
-    <section className="reflection-row">
-      <div className="reflection-card">
-        <div className="reflection-card__header"><div><span className="eyebrow">THIS WEEK</span><h3>今週のペース</h3></div><span className="reflection-card__total">{weekTotal}<small>回</small></span></div>
-        <div className="week-bars">{week.map((date) => { const count = habits.filter((habit) => records.some((record) => record.habitId === habit.id && record.completedDate === date)).length; return <div className="week-bar" key={date}><span className={count ? 'has-value' : ''} style={{ height: `${Math.max(count / Math.max(habits.length, 1) * 100, 8)}%` }} /><small>{new Intl.DateTimeFormat('ja-JP', { weekday: 'short' }).format(new Date(`${date}T00:00:00`))}</small></div> })}</div>
-      </div>
-      <div className="encouragement-card"><span className="encouragement-card__icon">✦</span><div><span className="eyebrow">A LITTLE NOTE</span><h3>{bestHabit && getStreak(bestHabit, records) > 0 ? `${getStreak(bestHabit, records)}日続いています` : '小さく始めよう'}</h3><p>{bestHabit && getStreak(bestHabit, records) > 0 ? `「${bestHabit.name}」の調子がいいですね。` : 'できた日を、ひとつずつ数えていこう。'}</p></div></div>
+    <section className="home-stats-teaser">
+      <div><span className="eyebrow">THIS WEEK</span><strong>今週 {insights.weekProgress.completed}/{insights.weekProgress.target}達成</strong><p>達成率 {insights.weekRate}% · 現在の連続日数 {insights.currentStreak}日</p></div>
+      <button className="text-button" onClick={onViewStats}>統計を見る <span aria-hidden="true">→</span></button>
     </section>
-
-    <section className="stats-overview">
-      <div className="section-heading"><div><span className="eyebrow">YOUR PROGRESS</span><h2>続け方を見える化</h2></div><span className="stats-overview__hint">過去の記録から集計</span></div>
-      <div className="stats-overview__cards">
-        <div className="metric-card metric-card--purple"><span>今週の達成率</span><strong>{weekRate}%</strong></div>
-        <div className="metric-card metric-card--mint"><span>今月の達成率</span><strong>{monthRate}%</strong></div>
-        <div className="metric-card metric-card--peach"><span>最長継続</span><strong>{longestStreak}<small>日</small></strong></div>
-        <div className="metric-card metric-card--sky"><span>現在の継続</span><strong>{currentStreak}<small>日</small></strong></div>
-      </div>
-      <div className="weekday-chart">
-        <div className="weekday-chart__header"><strong>曜日別達成率</strong><span>直近30日</span></div>
-        <div className="weekday-chart__bars">
-          {weekdayRates.map((item) => <div className="weekday-chart__item" key={item.label} aria-label={`${item.label}曜日 ${item.rate}%`}><div className="weekday-chart__track"><span style={{ height: `${Math.max(item.rate, 7)}%` }} /></div><small>{item.label}</small><b>{item.rate}%</b></div>)}
-        </div>
-      </div>
-    </section>
-
-    <section className="achievement-section">
-      <div className="achievement-section__header"><div><span className="eyebrow">LEVEL & ACHIEVEMENTS</span><h2>続けるほど育つ</h2></div><div className="level-badge"><span>LEVEL</span><strong>{levelName}</strong><small>{totalCompletions}回記録</small></div></div>
-      <div className="achievement-list">
-        {achievements.map((achievement) => <div className={`achievement-item ${achievement.unlocked ? 'is-unlocked' : ''}`} key={achievement.title}><span className="achievement-item__icon">{achievement.unlocked ? achievement.icon : '🔒'}</span><span><strong>{achievement.title}</strong><small>{achievement.detail}</small></span><b>{achievement.unlocked ? '解除済み' : '未解除'}</b></div>)}
-      </div>
-    </section>
-
-    {aiReflectionEnabled && <section className="ai-reflection-card"><div className="ai-reflection-card__icon">✦</div><div><span className="eyebrow">AI REFLECTION</span><h2>今日の振り返り</h2><p>{reflectionBody}</p><small>記録データから自動で分析しています。設定からON/OFFを切り替えられます。</small></div></section>}
   </div>
+}
+
+function StatsView({ habits, records, aiReflectionEnabled }: { habits: Habit[]; records: HabitRecord[]; aiReflectionEnabled: boolean }) {
+  const insights = getProgressInsights(habits, records)
+  const difference = insights.weekRate - insights.previousWeekRate
+  const achievements = [
+    { icon: '🌱', title: '初心者', detail: '7日継続', unlocked: insights.longestStreak >= 7 },
+    { icon: '🏆', title: '習慣マスター', detail: '30日継続', unlocked: insights.longestStreak >= 30 },
+    { icon: '🎯', title: '実績解除', detail: '100回達成', unlocked: insights.totalCompletions >= 100 },
+  ]
+  const reflectionBody = insights.focusHabit && insights.focusDay
+    ? `「${insights.focusHabit.habit.name}」は直近30日で${insights.focusHabit.rate}%達成。${insights.focusDay.label}曜日が${insights.focusDay.rate}%と少し低めなので、その曜日だけ目標を軽くしてみると続けやすそうです。`
+    : insights.focusHabit
+      ? `「${insights.focusHabit.habit.name}」の直近30日の達成率は${insights.focusHabit.rate}%です。無理のない小さな行動に分けて続けてみましょう。`
+      : '記録が増えると、あなたの続きやすい曜日やペースをここで振り返れます。'
+
+  return <PageFrame eyebrow="YOUR PROGRESS" title="統計" description="見る項目を絞って、今のペースを確認しましょう。">
+    <div className="stats-grid stats-grid--overview">
+      <Stat label="今週の達成率" value={`${insights.weekRate}%`} accent="purple" />
+      <Stat label="現在の連続日数" value={`${insights.currentStreak}日`} accent="mint" />
+      <Stat label="先週との比較" value={`${difference >= 0 ? '+' : ''}${difference}pt`} accent="peach" />
+    </div>
+    <section className="stats-compare-card"><div><span className="eyebrow">WEEKLY CHECK</span><h2>今週のペース</h2><p>今週 {insights.weekProgress.completed}/{insights.weekProgress.target}達成 · 先週 {insights.previousWeekProgress.completed}/{insights.previousWeekProgress.target}</p></div><strong className={difference >= 0 ? 'is-up' : 'is-down'}>{difference >= 0 ? '↗' : '↘'} {Math.abs(difference)}pt</strong></section>
+    <section className="achievement-section"><div className="achievement-section__header"><div><span className="eyebrow">LEVEL & ACHIEVEMENTS</span><h2>続けるほど育つ</h2></div><div className="level-badge"><span>LEVEL</span><strong>{insights.levelName}</strong><small>{insights.totalCompletions}回記録</small></div></div><div className="achievement-list">{achievements.map((achievement) => <div className={`achievement-item ${achievement.unlocked ? 'is-unlocked' : ''}`} key={achievement.title}><span className="achievement-item__icon">{achievement.unlocked ? achievement.icon : '🔒'}</span><span><strong>{achievement.title}</strong><small>{achievement.detail}</small></span><b>{achievement.unlocked ? '解除済み' : '未解除'}</b></div>)}</div></section>
+    {aiReflectionEnabled && <section className="ai-reflection-card"><div className="ai-reflection-card__icon">✦</div><div><span className="eyebrow">AI REFLECTION</span><h2>記録からの振り返り</h2><p>{reflectionBody}</p><small>設定からいつでもON/OFFを切り替えられます。</small></div></section>}
+  </PageFrame>
 }
 
 function HabitsView({ habits, records, onToggle, onOpen, onAdd }: { habits: Habit[]; records: HabitRecord[]; onToggle: (id: string) => void; onOpen: (id: string) => void; onAdd: () => void }) {
   return <PageFrame eyebrow="YOUR HABITS" title="自分の習慣" description="あなたが大切にしている、毎日の小さな約束。"><div className="list-toolbar"><span>{habits.length}個の習慣</span><button className="button button--primary button--small" onClick={onAdd}>＋ 追加する</button></div><div className="habit-grid">{habits.map((habit) => <HabitCard key={habit.id} habit={habit} records={records} completed={records.some((record) => record.habitId === habit.id && record.completedDate === todayISO())} onToggle={() => onToggle(habit.id)} onOpen={() => onOpen(habit.id)} />)}</div>{habits.length === 0 && <EmptyHabits onAdd={onAdd} />}</PageFrame>
 }
 
-function DetailView({ habit, records, onBack, onToggle, onEdit, onEditNote, onDelete }: { habit: Habit; records: HabitRecord[]; onBack: () => void; onToggle: () => void; onEdit: () => void; onEditNote: (record: HabitRecord) => void; onDelete: () => void }) {
+function DetailView({ habit, records, onBack, onToggle, onToggleDate, onEdit, onEditNote, onDelete }: { habit: Habit; records: HabitRecord[]; onBack: () => void; onToggle: () => void; onToggleDate: (date: string) => void; onEdit: () => void; onEditNote: (record: HabitRecord) => void; onDelete: () => void }) {
   const completedDates = new Set(records.filter((record) => record.habitId === habit.id).map((record) => record.completedDate))
   const thisWeek = countThisWeek(habit.id, records)
   const streak = getStreak(habit, records)
@@ -488,7 +498,7 @@ function DetailView({ habit, records, onBack, onToggle, onEdit, onEditNote, onDe
   const completedLast30 = last30.filter((date) => completedDates.has(toISODate(date))).length
   const noteRecords = records.filter((record) => record.habitId === habit.id && record.note).slice().sort((a, b) => b.completedDate.localeCompare(a.completedDate))
 
-  return <div className="detail-view page-frame"><button className="back-button" onClick={onBack}>← <span>習慣一覧に戻る</span></button><section className={`detail-hero detail-hero--${habit.tone}`}><span className="detail-hero__icon">{habit.icon}</span><div><span className="eyebrow">HABIT DETAIL</span><h1>{habit.name}</h1><p>{frequencyLabel(habit.frequencyType, habit.targetPerWeek, habit.selectedDays, habit.targetPerMonth)} · {formatShortDate(habit.startDate)}から</p></div><button className={`detail-hero__action ${completedDates.has(todayISO()) ? 'is-complete' : ''}`} onClick={onToggle}>{completedDates.has(todayISO()) ? '✓ 今日達成' : '今日の完了'}</button></section><div className="stats-grid"><Stat label={habit.frequencyType === 'weekly' ? '今週の達成' : '現在のストリーク'} value={habit.frequencyType === 'weekly' ? `${thisWeek}/${habit.targetPerWeek}` : `${streak}日`} accent="purple" /><Stat label="過去30日の達成率" value={`${percentage(completedLast30, 30)}%`} accent="mint" /><Stat label="記録した日数" value={`${completedDates.size}日`} accent="peach" /></div><section className="detail-section"><div className="section-heading"><div><span className="eyebrow">YOUR RECORD</span><h2>達成カレンダー</h2></div><span className="calendar-legend"><i /> 達成</span></div><CalendarGrid completedDates={completedDates} /></section><section className="detail-section detail-notes"><div className="section-heading"><div><span className="eyebrow">YOUR NOTES</span><h2>達成メモ</h2></div><span className="settings-soon">SHORT NOTES</span></div>{noteRecords.length ? <div className="note-list">{noteRecords.map((record) => <div className="note-item" key={record.id}><div><span>{formatShortDate(record.completedDate)}</span><p>{record.note}</p></div><button className="text-button" onClick={() => onEditNote(record)}>編集</button></div>)}</div> : <p className="note-empty">完了したときに、短いメモを残せます。</p>}</section><div className="detail-actions"><button className="button button--secondary" onClick={onEdit}>✎ 編集する</button><button className="button button--danger" onClick={onDelete}>削除する</button></div></div>
+  return <div className="detail-view page-frame"><button className="back-button" onClick={onBack}>← <span>習慣一覧に戻る</span></button><section className={`detail-hero detail-hero--${habit.tone}`}><span className="detail-hero__icon">{habit.icon}</span><div><span className="eyebrow">HABIT DETAIL</span><h1>{habit.name}</h1><p>{frequencyLabel(habit.frequencyType, habit.targetPerWeek, habit.selectedDays, habit.targetPerMonth)}{habit.targetValue ? ` · 1日${habit.targetValue}${habit.targetUnit ?? '回'}` : ''} · {formatShortDate(habit.startDate)}から</p></div><button className={`detail-hero__action ${completedDates.has(todayISO()) ? 'is-complete' : ''}`} onClick={onToggle}>{completedDates.has(todayISO()) ? '✓ 今日達成' : '今日の完了'}</button></section><div className="stats-grid"><Stat label={habit.frequencyType === 'weekly' ? '今週の達成' : '現在のストリーク'} value={habit.frequencyType === 'weekly' ? `${thisWeek}/${habit.targetPerWeek}` : `${streak}日`} accent="purple" /><Stat label="過去30日の達成率" value={`${percentage(completedLast30, 30)}%`} accent="mint" /><Stat label="記録した日数" value={`${completedDates.size}日`} accent="peach" /></div><section className="detail-section"><div className="section-heading"><div><span className="eyebrow">YOUR RECORD</span><h2>達成カレンダー</h2></div><span className="calendar-legend"><i /> 達成</span></div><p className="calendar-hint">日付をタップして、過去の達成記録を修正できます。</p><CalendarGrid completedDates={completedDates} onToggleDate={onToggleDate} /></section><section className="detail-section detail-notes"><div className="section-heading"><div><span className="eyebrow">YOUR NOTES</span><h2>達成メモ</h2></div><span className="settings-soon">SHORT NOTES</span></div>{noteRecords.length ? <div className="note-list">{noteRecords.map((record) => <div className="note-item" key={record.id}><div><span>{formatShortDate(record.completedDate)}{record.amount ? ` · 実績${record.amount}${habit.targetUnit ?? ''}` : ''}</span><p>{record.note}</p></div><button className="text-button" onClick={() => onEditNote(record)}>編集</button></div>)}</div> : <p className="note-empty">完了したときに、短いメモを残せます。</p>}</section><div className="detail-actions"><button className="button button--secondary" onClick={onEdit}>✎ 編集する</button><button className="button button--danger" onClick={onDelete}>削除する</button></div></div>
 }
 
 function Stat({ label, value, accent }: { label: string; value: string; accent: string }) {
@@ -545,20 +555,23 @@ function CelebrationOverlay({ celebration }: { celebration: Celebration }) {
   </div>
 }
 
-function NoteDialog({ target, onSave, onSkip }: { target: NoteTarget; onSave: (note: string) => void; onSkip: () => void }) {
+function NoteDialog({ target, onSave, onSkip }: { target: NoteTarget; onSave: (note: string, amount?: number) => void; onSkip: () => void }) {
   const [note, setNote] = useState(target.initialNote)
+  const [amount, setAmount] = useState(target.initialAmount?.toString() ?? '')
 
   useEffect(() => {
     setNote(target.initialNote)
+    setAmount(target.initialAmount?.toString() ?? '')
   }, [target])
 
   return <div className="note-dialog" role="dialog" aria-modal="true" aria-label={`${target.name}の達成メモ`}>
     <button className="note-dialog__backdrop" aria-label="メモを閉じる" onClick={onSkip} />
-    <form className="note-dialog__card" onSubmit={(event) => { event.preventDefault(); onSave(note) }}>
+    <form className="note-dialog__card" onSubmit={(event) => { event.preventDefault(); onSave(note, amount.trim() ? Number(amount) : undefined) }}>
       <span className="note-dialog__icon" aria-hidden="true">✎</span>
       <span className="eyebrow">A LITTLE NOTE</span>
       <h2>今日のメモを残す？</h2>
       <p>「{target.name}」について、短く記録できます。</p>
+      {target.targetValue && <label className="note-dialog__amount-label">実績値（目標 {target.targetValue}{target.targetUnit ?? '回'}）<input className="note-dialog__amount" type="number" min="0" step="1" value={amount} placeholder={`${target.targetValue}`} onChange={(event) => setAmount(event.target.value)} /><span>{target.targetUnit ?? '回'}</span></label>}
       <textarea className="note-dialog__input" value={note} maxLength={120} autoFocus placeholder="例：今日は30分走った" onChange={(event) => setNote(event.target.value)} />
       <div className="note-dialog__footer"><small>{note.length}/120</small><div><button type="button" className="button button--ghost button--small" onClick={onSkip}>あとで</button><button type="submit" className="button button--primary button--small">メモを保存</button></div></div>
     </form>

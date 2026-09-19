@@ -15,6 +15,7 @@ export function HabitCard({ habit, records, completed, onToggle, onOpen }: Habit
   const weeklyCount = countThisWeek(habit.id, records)
   const weeklyGoal = habit.frequencyType === 'weekly' ? habit.targetPerWeek ?? 1 : getScheduledDaysThisWeek(habit)
   const monthlyCount = countThisMonth(habit.id, records)
+  const goalLabel = habit.targetValue ? `目標${habit.targetValue}${habit.targetUnit ?? '回'}` : ''
 
   return (
     <article className={`habit-card habit-card--${habit.tone} ${completed ? 'is-complete' : ''}`}>
@@ -24,9 +25,11 @@ export function HabitCard({ habit, records, completed, onToggle, onOpen }: Habit
           <span className="habit-card__name">{habit.name}</span>
           <span className="habit-card__meta">
             <span>{frequencyLabel(habit.frequencyType, habit.targetPerWeek, habit.selectedDays, habit.targetPerMonth)}</span>
+            {goalLabel && <span>{goalLabel}</span>}
             <span className="habit-card__streak habit-card__streak--week">{habit.frequencyType === 'monthly' ? `今月 ${monthlyCount} / ${habit.targetPerMonth ?? 1}回` : `今週 ${weeklyCount} / ${weeklyGoal}日`}</span>
             <span className="habit-card__streak">🔥 {streak}日継続</span>
             {habit.reminderEnabled && habit.reminderTime && <span className="habit-card__reminder">🔔 {habit.reminderTime}</span>}
+            {habit.smartReminder && <span className="habit-card__reminder">✨ スマート通知</span>}
           </span>
         </span>
         <span className="habit-card__chevron" aria-hidden="true">›</span>

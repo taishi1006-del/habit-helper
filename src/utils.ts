@@ -52,6 +52,7 @@ export const frequencyLabel = (type: FrequencyType, targetPerWeek?: number, sele
   if (type === 'weekly') return `週${targetPerWeek ?? 1}回`
   if (type === 'monthly') return `月${targetPerMonth ?? 1}回`
   const labels = ['月', '火', '水', '木', '金', '土', '日']
+  if (selectedDays?.join(',') === '1,2,3,4,5') return '平日のみ'
   return selectedDays?.map((day) => labels[day - 1]).join('・') || '曜日指定'
 }
 
@@ -63,6 +64,22 @@ export const countThisWeek = (habitId: string, records: HabitRecord[]) => {
 export const countThisMonth = (habitId: string, records: HabitRecord[], date = new Date()) => {
   const prefix = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
   return records.filter((record) => record.habitId === habitId && record.completedDate.startsWith(prefix)).length
+}
+
+export const getSuggestedReminderTime = (habitId: string, records: HabitRecord[], date = new Date()) => {
+  const counts = new Map<string, number>()
+  const recentLimit = date.getTime() - 45 * 86400000
+  records
+    .filter((record) => record.habitId === habitId && Date.parse(record.createdAt) >= recentLimit)
+    .forEach((record) => {
+      const completedAt = new Date(record.createdAt)
+      if (Number.isNaN(completedAt.getTime())) return
+      const hour = String(completedAt.getHours()).padStart(2, '0')
+      const minute = completedAt.getMinutes() < 30 ? '00' : '30'
+      const time = `${hour}:${minute}`
+      counts.set(time, (counts.get(time) ?? 0) + 1)
+    })
+  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
 }
 
 export const countScheduledDays = (habit: Habit, dates: string[]) => dates.filter((date) => isDueToday(habit, new Date(`${date}T00:00:00`))).length
@@ -109,12 +126,16 @@ const getTargetForPeriod = (habit: Habit, dates: string[]) => {
   return Math.max(1, new Set(dates.map((date) => date.slice(0, 7))).size) * (habit.targetPerMonth ?? 1)
 }
 
-export const getPeriodCompletionRate = (habits: Habit[], records: HabitRecord[], start: Date, end: Date) => {
+export const getPeriodProgress = (habits: Habit[], records: HabitRecord[], start: Date, end: Date) => {
   const dates = getPeriodDates(start, end)
   const dateSet = new Set(dates)
   const completed = records.filter((record) => dateSet.has(record.completedDate) && habits.some((habit) => habit.id === record.habitId)).length
   const target = habits.reduce((total, habit) => total + getTargetForPeriod(habit, dates), 0)
-  return percentage(Math.min(completed, target), target)
+  return { completed: Math.min(completed, target), target, rate: percentage(Math.min(completed, target), target) }
+}
+
+export const getPeriodCompletionRate = (habits: Habit[], records: HabitRecord[], start: Date, end: Date) => {
+  return getPeriodProgress(habits, records, start, end).rate
 }
 
 export const getWeekdayCompletionRates = (habits: Habit[], records: HabitRecord[], end = new Date()) => {

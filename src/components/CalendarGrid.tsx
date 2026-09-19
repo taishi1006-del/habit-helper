@@ -3,11 +3,12 @@ import { toISODate } from '../utils'
 type CalendarGridProps = {
   completedDates: Set<string>
   selectedDates?: Set<string>
+  onToggleDate?: (date: string) => void
 }
 
 const labels = ['月', '火', '水', '木', '金', '土', '日']
 
-export function CalendarGrid({ completedDates, selectedDates }: CalendarGridProps) {
+export function CalendarGrid({ completedDates, selectedDates, onToggleDate }: CalendarGridProps) {
   const today = new Date()
   const year = today.getFullYear()
   const month = today.getMonth()
@@ -28,14 +29,17 @@ export function CalendarGrid({ completedDates, selectedDates }: CalendarGridProp
       </div>
       <div className="calendar-grid__days">
         {cells.map((cell, index) => cell ? (
-          <span
+          <button
+            type="button"
             key={cell.date}
             className={`calendar-day ${completedDates.has(cell.date) ? 'is-complete' : ''} ${selectedDates?.has(cell.date) ? 'is-selected' : ''}`}
-            title={completedDates.has(cell.date) ? `${cell.day}日：達成` : `${cell.day}日：未達成`}
+            title={completedDates.has(cell.date) ? `${cell.day}日：達成。タップで取り消し` : `${cell.day}日：未達成。タップで記録`}
+            aria-pressed={completedDates.has(cell.date)}
+            onClick={() => onToggleDate?.(cell.date)}
           >
             <span>{cell.day}</span>
             {completedDates.has(cell.date) && <i aria-hidden="true" />}
-          </span>
+          </button>
         ) : <span key={`empty-${index}`} className="calendar-day calendar-day--empty" />)}
       </div>
     </div>

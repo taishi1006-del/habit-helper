@@ -8,6 +8,7 @@ type BottomNavigationProps = {
 const items: Array<{ view: AppView; icon: string; label: string }> = [
   { view: 'home', icon: '⌂', label: 'ホーム' },
   { view: 'habits', icon: '◒', label: '習慣' },
+  { view: 'stats', icon: '▥', label: '統計' },
   { view: 'create', icon: '+', label: '追加' },
   { view: 'settings', icon: '⚙', label: '設定' },
 ]

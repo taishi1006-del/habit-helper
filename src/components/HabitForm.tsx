@@ -1,40 +1,51 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import type { Habit, FrequencyType } from '../types'
+import type { GoalUnit, Habit, HabitRecord, FrequencyType } from '../types'
+import { getSuggestedReminderTime } from '../utils'
 
 type HabitFormProps = {
   initialHabit?: Habit
+  records: HabitRecord[]
   onSubmit: (habit: Omit<Habit, 'id' | 'createdAt'>) => void
   onCancel: () => void
 }
 
 const icons = ['💧', '🏃', '📖', '🧘', '✍️', '🧹', '🌱', '🎧']
 const dayLabels = ['月', '火', '水', '木', '金', '土', '日']
+const goalUnits: GoalUnit[] = ['回', '分', '杯', '個']
 
-export function HabitForm({ initialHabit, onSubmit, onCancel }: HabitFormProps) {
+export function HabitForm({ initialHabit, records, onSubmit, onCancel }: HabitFormProps) {
   const [name, setName] = useState(initialHabit?.name ?? '')
   const [icon, setIcon] = useState(initialHabit?.icon ?? '💧')
   const [frequencyType, setFrequencyType] = useState<FrequencyType>(initialHabit?.frequencyType ?? 'daily')
-  const [targetPerWeek, setTargetPerWeek] = useState(initialHabit?.targetPerWeek ?? 4)
+  const [targetPerWeek, setTargetPerWeek] = useState(initialHabit?.targetPerWeek ?? 3)
   const [targetPerMonth, setTargetPerMonth] = useState(initialHabit?.targetPerMonth ?? 10)
+  const [targetValue, setTargetValue] = useState(initialHabit?.targetValue ?? 1)
+  const [targetUnit, setTargetUnit] = useState<GoalUnit>(initialHabit?.targetUnit ?? '回')
   const [selectedDays, setSelectedDays] = useState<number[]>(initialHabit?.selectedDays ?? [1, 3, 5])
   const [reminderEnabled, setReminderEnabled] = useState(initialHabit?.reminderEnabled ?? true)
   const [reminderTime, setReminderTime] = useState(initialHabit?.reminderTime ?? '20:00')
+  const [smartReminder, setSmartReminder] = useState(initialHabit?.smartReminder ?? false)
   const [startDate, setStartDate] = useState(initialHabit?.startDate ?? new Date().toISOString().slice(0, 10))
   const [endDate, setEndDate] = useState(initialHabit?.endDate ?? '')
+  const [showAdvanced, setShowAdvanced] = useState(Boolean(initialHabit))
   const [error, setError] = useState('')
 
   useEffect(() => {
     setName(initialHabit?.name ?? '')
     setIcon(initialHabit?.icon ?? '💧')
     setFrequencyType(initialHabit?.frequencyType ?? 'daily')
-    setTargetPerWeek(initialHabit?.targetPerWeek ?? 4)
+    setTargetPerWeek(initialHabit?.targetPerWeek ?? 3)
     setTargetPerMonth(initialHabit?.targetPerMonth ?? 10)
+    setTargetValue(initialHabit?.targetValue ?? 1)
+    setTargetUnit(initialHabit?.targetUnit ?? '回')
     setSelectedDays(initialHabit?.selectedDays ?? [1, 3, 5])
     setReminderEnabled(initialHabit?.reminderEnabled ?? true)
     setReminderTime(initialHabit?.reminderTime ?? '20:00')
+    setSmartReminder(initialHabit?.smartReminder ?? false)
     setStartDate(initialHabit?.startDate ?? new Date().toISOString().slice(0, 10))
     setEndDate(initialHabit?.endDate ?? '')
+    setShowAdvanced(Boolean(initialHabit))
   }, [initialHabit])
 
   const toggleDay = (day: number) => {
@@ -62,14 +73,19 @@ export function HabitForm({ initialHabit, onSubmit, onCancel }: HabitFormProps) 
       frequencyType,
       targetPerWeek: frequencyType === 'weekly' ? targetPerWeek : undefined,
       targetPerMonth: frequencyType === 'monthly' ? targetPerMonth : undefined,
+      targetValue: showAdvanced && targetValue > 0 ? targetValue : undefined,
+      targetUnit: showAdvanced ? targetUnit : undefined,
       selectedDays: frequencyType === 'selected_days' ? selectedDays : undefined,
       reminderEnabled,
       reminderTime,
+      smartReminder,
       startDate,
       endDate: endDate || undefined,
       tone: initialHabit?.tone ?? 'mint',
     })
   }
+
+  const suggestedReminderTime = initialHabit ? getSuggestedReminderTime(initialHabit.id, records) : null
 
   return (
     <form className="habit-form" onSubmit={submit}>
@@ -86,17 +102,6 @@ export function HabitForm({ initialHabit, onSubmit, onCancel }: HabitFormProps) 
       </div>
 
       <div className="form-section">
-        <span className="form-label">アイコンを選ぶ</span>
-        <div className="icon-picker">
-          {icons.map((item) => (
-            <button key={item} type="button" className={icon === item ? 'is-selected' : ''} onClick={() => setIcon(item)} aria-label={`${item}を選択`}>
-              {item}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="form-section">
         <span className="form-label">頻度</span>
         <div className="frequency-options">
           <button type="button" className={frequencyType === 'daily' ? 'is-selected' : ''} onClick={() => setFrequencyType('daily')}>
@@ -108,9 +113,26 @@ export function HabitForm({ initialHabit, onSubmit, onCancel }: HabitFormProps) 
           <button type="button" className={frequencyType === 'monthly' ? 'is-selected' : ''} onClick={() => setFrequencyType('monthly')}>
             <strong>月に何回か</strong><span>月の目標で続けたい</span>
           </button>
-          <button type="button" className={frequencyType === 'selected_days' ? 'is-selected' : ''} onClick={() => setFrequencyType('selected_days')}>
+          <button type="button" className={frequencyType === 'selected_days' && selectedDays.join(',') === '1,2,3,4,5' ? 'is-selected' : ''} onClick={() => { setFrequencyType('selected_days'); setSelectedDays([1, 2, 3, 4, 5]) }}>
+            <strong>平日のみ</strong><span>月〜金で続けたい</span>
+          </button>
+          <button type="button" className={frequencyType === 'selected_days' && selectedDays.join(',') !== '1,2,3,4,5' ? 'is-selected' : ''} onClick={() => setFrequencyType('selected_days')}>
             <strong>曜日を選ぶ</strong><span>予定に合わせたい</span>
           </button>
+        </div>
+      </div>
+
+      <button type="button" className="form-advanced-toggle" onClick={() => setShowAdvanced((value) => !value)}>{showAdvanced ? '詳細設定を閉じる' : '詳細設定（アイコン・目標・通知）'} <span aria-hidden="true">{showAdvanced ? '⌃' : '⌄'}</span></button>
+
+      {showAdvanced && <div className="habit-form__advanced">
+      <div className="form-section">
+        <span className="form-label">アイコンを選ぶ</span>
+        <div className="icon-picker">
+          {icons.map((item) => (
+            <button key={item} type="button" className={icon === item ? 'is-selected' : ''} onClick={() => setIcon(item)} aria-label={`${item}を選択`}>
+              {item}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -145,6 +167,16 @@ export function HabitForm({ initialHabit, onSubmit, onCancel }: HabitFormProps) 
       )}
 
       <div className="form-section form-section--inline">
+        <label className="form-label" htmlFor="target-value">1日の達成基準</label>
+        <div className="goal-input-group">
+          <input id="target-value" className="goal-input" type="number" min="1" max="999" value={targetValue} onChange={(event) => setTargetValue(Number(event.target.value))} />
+          <select className="select-input" value={targetUnit} onChange={(event) => setTargetUnit(event.target.value as GoalUnit)} aria-label="達成基準の単位">
+            {goalUnits.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div className="form-section form-section--inline">
         <label className="form-label" htmlFor="start-date">開始日</label>
         <input id="start-date" type="date" className="date-input" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
       </div>
@@ -170,8 +202,11 @@ export function HabitForm({ initialHabit, onSubmit, onCancel }: HabitFormProps) 
           <label className="form-label" htmlFor="reminder-time">通知時刻</label>
           <input id="reminder-time" type="time" className="time-input" value={reminderTime} disabled={!reminderEnabled} onChange={(event) => setReminderTime(event.target.value)} />
         </div>
+        <label className="smart-reminder-row"><input type="checkbox" checked={smartReminder} disabled={!reminderEnabled} onChange={(event) => setSmartReminder(event.target.checked)} /><span><strong>スマート通知</strong><small>最近よく達成する時間帯を参考に通知します。</small></span></label>
+        {suggestedReminderTime && <button type="button" className="suggested-time-button" onClick={() => setReminderTime(suggestedReminderTime)}>最近は {suggestedReminderTime} 頃に達成しています。通知時刻に設定</button>}
         <p className="form-hint">アプリを開いている間に通知されます。まず設定画面で通知を許可してください。</p>
       </div>
+      </div>}
 
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="form-actions">

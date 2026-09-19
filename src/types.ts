@@ -1,4 +1,5 @@
 export type FrequencyType = 'daily' | 'weekly' | 'monthly' | 'selected_days'
+export type GoalUnit = '回' | '分' | '杯' | '個'
 
 export type Habit = {
   id: string
@@ -7,9 +8,12 @@ export type Habit = {
   frequencyType: FrequencyType
   targetPerWeek?: number
   targetPerMonth?: number
+  targetValue?: number
+  targetUnit?: GoalUnit
   selectedDays?: number[]
   reminderEnabled?: boolean
   reminderTime?: string
+  smartReminder?: boolean
   startDate: string
   endDate?: string
   createdAt: string
@@ -21,7 +25,8 @@ export type HabitRecord = {
   habitId: string
   completedDate: string
   note?: string
+  amount?: number
   createdAt: string
 }
 
-export type AppView = 'home' | 'habits' | 'create' | 'detail' | 'settings'
+export type AppView = 'home' | 'habits' | 'create' | 'detail' | 'stats' | 'settings'
