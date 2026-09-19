@@ -158,6 +158,28 @@ h1, h2, h3, p { margin-top: 0; }
 .encouragement-card .eyebrow { color: #89aa96; }
 .encouragement-card h3 { color: #2d5540; }
 .encouragement-card p { margin: 7px 0 0; color: #7c9b88; font-size: 10px; }
+.stats-overview { margin-top: 35px; padding: 24px 25px 25px; border: 1px solid var(--line); border-radius: 19px; background: rgba(255,255,255,.72); }
+.stats-overview .section-heading { margin-bottom: 16px; }
+.stats-overview__hint { color: #a8b0b0; font-size: 10px; }
+.stats-overview__cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
+.metric-card { display: grid; gap: 7px; min-width: 0; min-height: 87px; padding: 15px 14px; border-left: 3px solid transparent; border-radius: 14px; background: #fff; }
+.metric-card span { overflow: hidden; color: #9aa4a4; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.metric-card strong { color: var(--ink); font-family: Manrope, sans-serif; font-size: 22px; letter-spacing: -.07em; }
+.metric-card strong small { margin-left: 2px; font-family: 'DM Sans', sans-serif; font-size: 10px; letter-spacing: 0; }
+.metric-card--purple { border-left-color: #aaa6f2; }
+.metric-card--mint { border-left-color: #a4d9bd; }
+.metric-card--peach { border-left-color: #f6baa2; }
+.metric-card--sky { border-left-color: #9bcfe6; }
+.weekday-chart { margin-top: 20px; padding-top: 18px; border-top: 1px solid #edf0ec; }
+.weekday-chart__header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.weekday-chart__header strong { color: #596568; font-size: 11px; }
+.weekday-chart__header span { color: #a8b0b0; font-size: 9px; }
+.weekday-chart__bars { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 9px; height: 118px; margin-top: 13px; }
+.weekday-chart__item { display: grid; grid-template-rows: 1fr auto auto; justify-items: center; gap: 5px; min-width: 0; }
+.weekday-chart__track { display: flex; align-items: flex-end; width: 100%; max-width: 28px; height: 76px; overflow: hidden; border-radius: 8px 8px 4px 4px; background: #f0f1ee; }
+.weekday-chart__track span { display: block; width: 100%; min-height: 5px; border-radius: 8px 8px 4px 4px; background: linear-gradient(#8d86f1, #6962d8); }
+.weekday-chart__item small { color: #9ca5a5; font-size: 9px; }
+.weekday-chart__item b { color: var(--purple-dark); font-size: 9px; }
 
 .page-frame { max-width: 980px; margin: 38px auto 0; }
 .page-heading { margin-bottom: 30px; }
@@ -181,7 +203,7 @@ h1, h2, h3, p { margin-top: 0; }
 .icon-picker { display: flex; flex-wrap: wrap; gap: 8px; }
 .icon-picker button { display: inline-flex; align-items: center; justify-content: center; width: 39px; height: 39px; padding: 0; border: 1px solid #e3e8e3; border-radius: 11px; background: white; font-size: 19px; transition: .2s ease; }
 .icon-picker button:hover, .icon-picker button.is-selected { border-color: #aba6ec; background: #f0efff; transform: translateY(-2px); }
-.frequency-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.frequency-options { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .frequency-options button { display: grid; gap: 5px; padding: 13px 11px; border: 1px solid #e3e8e3; border-radius: 12px; background: white; color: #838e90; text-align: left; transition: .2s ease; }
 .frequency-options button strong { color: var(--ink); font-size: 11px; }
 .frequency-options button span { font-size: 9px; }
@@ -353,6 +375,11 @@ h1, h2, h3, p { margin-top: 0; }
   .complete-button { min-width: 72px; min-height: 44px; padding: 9px 7px; font-size: 9px; }
   .reflection-row { grid-template-columns: 1fr; margin-top: 37px; }
   .reflection-card, .encouragement-card { min-height: 160px; padding: 20px; }
+  .stats-overview { margin-top: 28px; padding: 20px 17px 21px; }
+  .stats-overview__cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric-card { min-height: 78px; padding: 13px 11px; }
+  .metric-card strong { font-size: 20px; }
+  .weekday-chart__bars { gap: 5px; }
   .page-frame { margin-top: 26px; }
   .page-heading { margin-bottom: 23px; }
   .habit-grid { grid-template-columns: 1fr; }

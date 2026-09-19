@@ -7,7 +7,7 @@ import { HabitForm } from './components/HabitForm'
 import { ProgressRing } from './components/ProgressRing'
 import { starterHabits, starterRecords } from './data'
 import type { AppView, Habit, HabitRecord } from './types'
-import { countThisWeek, formatJapaneseDate, formatShortDate, frequencyLabel, getStreak, getWeekDates, isDueToday, percentage, todayISO, toISODate } from './utils'
+import { countThisWeek, formatJapaneseDate, formatShortDate, frequencyLabel, getLongestStreak, getMonday, getPeriodCompletionRate, getStreak, getWeekDates, getWeekdayCompletionRates, isDueToday, percentage, todayISO, toISODate } from './utils'
 
 const STORAGE_KEY = 'habit-helper-local-v1'
 const NOTIFICATION_HISTORY_KEY = 'habit-helper-notification-history-v1'
@@ -343,6 +343,12 @@ function HomeView({ habits, allHabits, records, completedToday, dailyGoal, progr
   const weekTotal = habits.reduce((total, habit) => total + countThisWeek(habit.id, records), 0)
   const bestHabit = allHabits.slice().sort((a, b) => getStreak(b, records) - getStreak(a, records))[0]
   const bestStreak = bestHabit ? getStreak(bestHabit, records) : 0
+  const currentStreak = Math.max(0, ...allHabits.map((habit) => getStreak(habit, records)))
+  const longestStreak = Math.max(0, ...allHabits.map((habit) => getLongestStreak(habit, records)))
+  const now = new Date()
+  const weekRate = getPeriodCompletionRate(allHabits, records, getMonday(now), now)
+  const monthRate = getPeriodCompletionRate(allHabits, records, new Date(now.getFullYear(), now.getMonth(), 1), now)
+  const weekdayRates = getWeekdayCompletionRates(allHabits, records, now)
 
   return <div className="home-view">
     <div className="date-strip"><span className="date-strip__dot" aria-hidden="true" />今日 · {formatJapaneseDate()}</div>
@@ -363,7 +369,7 @@ function HomeView({ habits, allHabits, records, completedToday, dailyGoal, progr
     </section>
 
     <section className="section-block today-section">
-      <div className="section-heading"><div><span className="eyebrow">FOR TODAY</span><h2>今日の習慣</h2></div><button className="text-button" onClick={onViewAll}>すべて見る <span aria-hidden="true">→</span></button></div>
+      <div className="section-heading"><div><span className="eyebrow">FOR TODAY</span><h2>今日やること</h2></div><button className="text-button" onClick={onViewAll}>すべて見る <span aria-hidden="true">→</span></button></div>
       <div className="habit-stack">
         {habits.length === 0 ? <EmptyHabits onAdd={onAdd} /> : habits.map((habit) => <HabitCard key={habit.id} habit={habit} records={records} completed={records.some((record) => record.habitId === habit.id && record.completedDate === todayISO())} onToggle={() => onToggle(habit.id)} onOpen={() => onOpen(habit.id)} />)}
       </div>
@@ -382,6 +388,22 @@ function HomeView({ habits, allHabits, records, completedToday, dailyGoal, progr
       </div>
       <div className="encouragement-card"><span className="encouragement-card__icon">✦</span><div><span className="eyebrow">A LITTLE NOTE</span><h3>{bestHabit && getStreak(bestHabit, records) > 0 ? `${getStreak(bestHabit, records)}日続いています` : '小さく始めよう'}</h3><p>{bestHabit && getStreak(bestHabit, records) > 0 ? `「${bestHabit.name}」の調子がいいですね。` : 'できた日を、ひとつずつ数えていこう。'}</p></div></div>
     </section>
+
+    <section className="stats-overview">
+      <div className="section-heading"><div><span className="eyebrow">YOUR PROGRESS</span><h2>続け方を見える化</h2></div><span className="stats-overview__hint">過去の記録から集計</span></div>
+      <div className="stats-overview__cards">
+        <div className="metric-card metric-card--purple"><span>今週の達成率</span><strong>{weekRate}%</strong></div>
+        <div className="metric-card metric-card--mint"><span>今月の達成率</span><strong>{monthRate}%</strong></div>
+        <div className="metric-card metric-card--peach"><span>最長継続</span><strong>{longestStreak}<small>日</small></strong></div>
+        <div className="metric-card metric-card--sky"><span>現在の継続</span><strong>{currentStreak}<small>日</small></strong></div>
+      </div>
+      <div className="weekday-chart">
+        <div className="weekday-chart__header"><strong>曜日別達成率</strong><span>直近30日</span></div>
+        <div className="weekday-chart__bars">
+          {weekdayRates.map((item) => <div className="weekday-chart__item" key={item.label} aria-label={`${item.label}曜日 ${item.rate}%`}><div className="weekday-chart__track"><span style={{ height: `${Math.max(item.rate, 7)}%` }} /></div><small>{item.label}</small><b>{item.rate}%</b></div>)}
+        </div>
+      </div>
+    </section>
   </div>
 }
 
@@ -396,7 +418,7 @@ function DetailView({ habit, records, onBack, onToggle, onEdit, onDelete }: { ha
   const last30 = Array.from({ length: 30 }, (_, index) => { const date = new Date(); date.setDate(date.getDate() - index); return date })
   const completedLast30 = last30.filter((date) => completedDates.has(toISODate(date))).length
 
-  return <div className="detail-view page-frame"><button className="back-button" onClick={onBack}>← <span>習慣一覧に戻る</span></button><section className={`detail-hero detail-hero--${habit.tone}`}><span className="detail-hero__icon">{habit.icon}</span><div><span className="eyebrow">HABIT DETAIL</span><h1>{habit.name}</h1><p>{frequencyLabel(habit.frequencyType, habit.targetPerWeek, habit.selectedDays)} · {formatShortDate(habit.startDate)}から</p></div><button className={`detail-hero__action ${completedDates.has(todayISO()) ? 'is-complete' : ''}`} onClick={onToggle}>{completedDates.has(todayISO()) ? '✓ 今日達成' : '今日の完了'}</button></section><div className="stats-grid"><Stat label={habit.frequencyType === 'weekly' ? '今週の達成' : '現在のストリーク'} value={habit.frequencyType === 'weekly' ? `${thisWeek}/${habit.targetPerWeek}` : `${streak}日`} accent="purple" /><Stat label="過去30日の達成率" value={`${percentage(completedLast30, 30)}%`} accent="mint" /><Stat label="記録した日数" value={`${completedDates.size}日`} accent="peach" /></div><section className="detail-section"><div className="section-heading"><div><span className="eyebrow">YOUR RECORD</span><h2>達成カレンダー</h2></div><span className="calendar-legend"><i /> 達成</span></div><CalendarGrid completedDates={completedDates} /></section><div className="detail-actions"><button className="button button--secondary" onClick={onEdit}>✎ 編集する</button><button className="button button--danger" onClick={onDelete}>削除する</button></div></div>
+  return <div className="detail-view page-frame"><button className="back-button" onClick={onBack}>← <span>習慣一覧に戻る</span></button><section className={`detail-hero detail-hero--${habit.tone}`}><span className="detail-hero__icon">{habit.icon}</span><div><span className="eyebrow">HABIT DETAIL</span><h1>{habit.name}</h1><p>{frequencyLabel(habit.frequencyType, habit.targetPerWeek, habit.selectedDays, habit.targetPerMonth)} · {formatShortDate(habit.startDate)}から</p></div><button className={`detail-hero__action ${completedDates.has(todayISO()) ? 'is-complete' : ''}`} onClick={onToggle}>{completedDates.has(todayISO()) ? '✓ 今日達成' : '今日の完了'}</button></section><div className="stats-grid"><Stat label={habit.frequencyType === 'weekly' ? '今週の達成' : '現在のストリーク'} value={habit.frequencyType === 'weekly' ? `${thisWeek}/${habit.targetPerWeek}` : `${streak}日`} accent="purple" /><Stat label="過去30日の達成率" value={`${percentage(completedLast30, 30)}%`} accent="mint" /><Stat label="記録した日数" value={`${completedDates.size}日`} accent="peach" /></div><section className="detail-section"><div className="section-heading"><div><span className="eyebrow">YOUR RECORD</span><h2>達成カレンダー</h2></div><span className="calendar-legend"><i /> 達成</span></div><CalendarGrid completedDates={completedDates} /></section><div className="detail-actions"><button className="button button--secondary" onClick={onEdit}>✎ 編集する</button><button className="button button--danger" onClick={onDelete}>削除する</button></div></div>
 }
 
 function Stat({ label, value, accent }: { label: string; value: string; accent: string }) {

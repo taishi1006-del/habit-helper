@@ -16,10 +16,12 @@ export function HabitForm({ initialHabit, onSubmit, onCancel }: HabitFormProps) 
   const [icon, setIcon] = useState(initialHabit?.icon ?? '💧')
   const [frequencyType, setFrequencyType] = useState<FrequencyType>(initialHabit?.frequencyType ?? 'daily')
   const [targetPerWeek, setTargetPerWeek] = useState(initialHabit?.targetPerWeek ?? 4)
+  const [targetPerMonth, setTargetPerMonth] = useState(initialHabit?.targetPerMonth ?? 10)
   const [selectedDays, setSelectedDays] = useState<number[]>(initialHabit?.selectedDays ?? [1, 3, 5])
   const [reminderEnabled, setReminderEnabled] = useState(initialHabit?.reminderEnabled ?? true)
   const [reminderTime, setReminderTime] = useState(initialHabit?.reminderTime ?? '20:00')
   const [startDate, setStartDate] = useState(initialHabit?.startDate ?? new Date().toISOString().slice(0, 10))
+  const [endDate, setEndDate] = useState(initialHabit?.endDate ?? '')
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -27,10 +29,12 @@ export function HabitForm({ initialHabit, onSubmit, onCancel }: HabitFormProps) 
     setIcon(initialHabit?.icon ?? '💧')
     setFrequencyType(initialHabit?.frequencyType ?? 'daily')
     setTargetPerWeek(initialHabit?.targetPerWeek ?? 4)
+    setTargetPerMonth(initialHabit?.targetPerMonth ?? 10)
     setSelectedDays(initialHabit?.selectedDays ?? [1, 3, 5])
     setReminderEnabled(initialHabit?.reminderEnabled ?? true)
     setReminderTime(initialHabit?.reminderTime ?? '20:00')
     setStartDate(initialHabit?.startDate ?? new Date().toISOString().slice(0, 10))
+    setEndDate(initialHabit?.endDate ?? '')
   }, [initialHabit])
 
   const toggleDay = (day: number) => {
@@ -47,16 +51,22 @@ export function HabitForm({ initialHabit, onSubmit, onCancel }: HabitFormProps) 
       setError('曜日を1つ以上選択してください')
       return
     }
+    if (endDate && endDate < startDate) {
+      setError('終了日は開始日以降にしてください')
+      return
+    }
     setError('')
     onSubmit({
       name: name.trim(),
       icon,
       frequencyType,
       targetPerWeek: frequencyType === 'weekly' ? targetPerWeek : undefined,
+      targetPerMonth: frequencyType === 'monthly' ? targetPerMonth : undefined,
       selectedDays: frequencyType === 'selected_days' ? selectedDays : undefined,
       reminderEnabled,
       reminderTime,
       startDate,
+      endDate: endDate || undefined,
       tone: initialHabit?.tone ?? 'mint',
     })
   }
@@ -95,6 +105,9 @@ export function HabitForm({ initialHabit, onSubmit, onCancel }: HabitFormProps) 
           <button type="button" className={frequencyType === 'weekly' ? 'is-selected' : ''} onClick={() => setFrequencyType('weekly')}>
             <strong>週に何回か</strong><span>無理なく続けたい</span>
           </button>
+          <button type="button" className={frequencyType === 'monthly' ? 'is-selected' : ''} onClick={() => setFrequencyType('monthly')}>
+            <strong>月に何回か</strong><span>月の目標で続けたい</span>
+          </button>
           <button type="button" className={frequencyType === 'selected_days' ? 'is-selected' : ''} onClick={() => setFrequencyType('selected_days')}>
             <strong>曜日を選ぶ</strong><span>予定に合わせたい</span>
           </button>
@@ -106,6 +119,15 @@ export function HabitForm({ initialHabit, onSubmit, onCancel }: HabitFormProps) 
           <label className="form-label" htmlFor="target-per-week">週の目標</label>
           <select id="target-per-week" className="select-input" value={targetPerWeek} onChange={(event) => setTargetPerWeek(Number(event.target.value))}>
             {[1, 2, 3, 4, 5, 6, 7].map((count) => <option key={count} value={count}>週{count}回</option>)}
+          </select>
+        </div>
+      )}
+
+      {frequencyType === 'monthly' && (
+        <div className="form-section form-section--inline">
+          <label className="form-label" htmlFor="target-per-month">月の目標</label>
+          <select id="target-per-month" className="select-input" value={targetPerMonth} onChange={(event) => setTargetPerMonth(Number(event.target.value))}>
+            {[1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30].map((count) => <option key={count} value={count}>月{count}回</option>)}
           </select>
         </div>
       )}
@@ -125,6 +147,11 @@ export function HabitForm({ initialHabit, onSubmit, onCancel }: HabitFormProps) 
       <div className="form-section form-section--inline">
         <label className="form-label" htmlFor="start-date">開始日</label>
         <input id="start-date" type="date" className="date-input" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+      </div>
+
+      <div className="form-section form-section--inline">
+        <label className="form-label" htmlFor="end-date">終了日（任意）</label>
+        <input id="end-date" type="date" className="date-input" value={endDate} min={startDate} onChange={(event) => setEndDate(event.target.value)} />
       </div>
 
       <div className="form-section reminder-form-section">
