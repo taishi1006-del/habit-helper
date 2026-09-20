@@ -1,4 +1,4 @@
-import { dbJson, readJson, requireUser, sendError } from './_shared'
+import { dbJson, readJson, requireUser, sendError } from './_shared.js'
 
 export default async function handler(req: any, res: any) {
   try {

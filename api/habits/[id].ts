@@ -1,4 +1,4 @@
-import { ApiError, dbJson, dbRequest, readJson, requireUser, routeParam, sendError, userFilter } from '../_shared'
+import { ApiError, dbJson, dbRequest, readJson, requireUser, routeParam, sendError, userFilter } from '../_shared.js'
 
 const allowedFields = ['name', 'icon', 'frequencyType', 'targetPerWeek', 'targetPerMonth', 'targetValue', 'targetUnit', 'selectedDays', 'reminderEnabled', 'reminderTime', 'smartReminder', 'startDate', 'endDate', 'tone'] as const
 

@@ -1,4 +1,4 @@
-import { dbJson, dbRequest, mapHabit, mapRecord, requireUser, sendError, userFilter } from './_shared'
+import { dbJson, dbRequest, mapHabit, mapRecord, requireUser, sendError, userFilter } from './_shared.js'
 
 export default async function handler(req: any, res: any) {
   try {

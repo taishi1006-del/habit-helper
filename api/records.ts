@@ -1,4 +1,4 @@
-import { dbJson, requireUser, sendError, userFilter } from './_shared'
+import { dbJson, requireUser, sendError, userFilter } from './_shared.js'
 
 const readBody = (req: any) => typeof req.body === 'string' ? JSON.parse(req.body) : (req.body ?? {})
 

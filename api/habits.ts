@@ -1,4 +1,4 @@
-import { dbJson, habitPayload, readJson, requireUser, sendError, userFilter } from './_shared'
+import { dbJson, habitPayload, readJson, requireUser, sendError, userFilter } from './_shared.js'
 
 export default async function handler(req: any, res: any) {
   try {
