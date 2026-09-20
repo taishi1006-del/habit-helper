@@ -8,9 +8,11 @@ type HabitCardProps = {
   completed: boolean
   onToggle: () => void
   onOpen: () => void
+  onEdit?: () => void
+  onDelete?: () => void
 }
 
-export function HabitCard({ habit, records, completed, onToggle, onOpen }: HabitCardProps) {
+export function HabitCard({ habit, records, completed, onToggle, onOpen, onEdit, onDelete }: HabitCardProps) {
   const streak = getStreak(habit, records)
   const weeklyCount = countThisWeek(habit.id, records)
   const weeklyGoal = habit.frequencyType === 'weekly' ? habit.targetPerWeek ?? 1 : getScheduledDaysThisWeek(habit)
@@ -37,6 +39,10 @@ export function HabitCard({ habit, records, completed, onToggle, onOpen }: Habit
       <button className={`complete-button ${completed ? 'is-complete' : ''}`} onClick={onToggle}>
         {completed ? <><span aria-hidden="true">✓</span> 完了</> : '完了にする'}
       </button>
+      {(onEdit || onDelete) && <div className="habit-card__manage" aria-label={`${habit.name}の管理`}>
+        {onEdit && <button type="button" className="habit-card__manage-button" onClick={onEdit} aria-label={`${habit.name}を編集`} title="編集">編集</button>}
+        {onDelete && <button type="button" className="habit-card__manage-button habit-card__manage-button--danger" onClick={onDelete} aria-label={`${habit.name}を削除`} title="削除">削除</button>}
+      </div>}
     </article>
   )
 }
