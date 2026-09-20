@@ -26,7 +26,7 @@ export class ApiError extends Error {
 }
 
 const authConfig = () => {
-  const url = process.env.SUPABASE_URL
+  const url = process.env.SUPABASE_URL?.trim()
   const anonKey = process.env.SUPABASE_PUBLISHABLE_KEY ?? process.env.SUPABASE_ANON_KEY
   if (!url || !anonKey) throw new ApiError(500, 'Supabase認証用の環境変数（SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY または SUPABASE_ANON_KEY）が設定されていません')
   return { url: url.replace(/\/$/, ''), anonKey }
@@ -63,11 +63,16 @@ export async function requireUser(req: ApiRequest, res: ApiResponse) {
 
 export async function supabaseAuthRequest(path: string, body: unknown) {
   const { url, anonKey } = authConfig()
-  const response = await fetch(`${url}/auth/v1/${path}`, {
-    method: 'POST',
-    headers: { apikey: anonKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+  let response: Response
+  try {
+    response = await fetch(`${url}/auth/v1/${path}`, {
+      method: 'POST',
+      headers: { apikey: anonKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  } catch {
+    throw new ApiError(502, 'Supabaseへ接続できません。VercelのSUPABASE_URLが正しいか確認してください')
+  }
   const payload = await response.json().catch(() => ({})) as Record<string, any>
   if (!response.ok) throw new ApiError(response.status === 400 ? 400 : 401, payload.error_description ?? payload.msg ?? payload.message ?? '認証に失敗しました')
   return payload
