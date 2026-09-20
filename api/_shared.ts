@@ -25,12 +25,18 @@ export class ApiError extends Error {
   }
 }
 
-const config = () => {
+const authConfig = () => {
   const url = process.env.SUPABASE_URL
   const anonKey = process.env.SUPABASE_ANON_KEY
+  if (!url || !anonKey) throw new ApiError(500, 'Supabase認証用の環境変数（SUPABASE_URL / SUPABASE_ANON_KEY）が設定されていません')
+  return { url: url.replace(/\/$/, ''), anonKey }
+}
+
+const dbConfig = () => {
+  const { url, anonKey } = authConfig()
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-  if (!url || !anonKey || !serviceRoleKey) throw new ApiError(500, 'Supabaseの環境変数が設定されていません')
-  return { url: url.replace(/\/$/, ''), anonKey, serviceRoleKey }
+  if (!serviceRoleKey) throw new ApiError(500, 'Supabase DB用の環境変数（SUPABASE_SERVICE_ROLE_KEY）が設定されていません')
+  return { url, anonKey, serviceRoleKey }
 }
 
 const getAuthorization = (req: ApiRequest) => {
@@ -39,7 +45,7 @@ const getAuthorization = (req: ApiRequest) => {
 }
 
 export async function requireUser(req: ApiRequest, res: ApiResponse) {
-  const { url, anonKey } = config()
+  const { url, anonKey } = authConfig()
   const authorization = getAuthorization(req)
   if (!authorization?.startsWith('Bearer ')) throw new ApiError(401, 'ログインが必要です')
 
@@ -56,7 +62,7 @@ export async function requireUser(req: ApiRequest, res: ApiResponse) {
 }
 
 export async function supabaseAuthRequest(path: string, body: unknown) {
-  const { url, anonKey } = config()
+  const { url, anonKey } = authConfig()
   const response = await fetch(`${url}/auth/v1/${path}`, {
     method: 'POST',
     headers: { apikey: anonKey, 'Content-Type': 'application/json' },
@@ -68,7 +74,7 @@ export async function supabaseAuthRequest(path: string, body: unknown) {
 }
 
 export async function dbRequest(path: string, init: RequestInit = {}) {
-  const { url, serviceRoleKey } = config()
+  const { url, serviceRoleKey } = dbConfig()
   const headers = new Headers(init.headers)
   headers.set('apikey', serviceRoleKey)
   headers.set('Authorization', `Bearer ${serviceRoleKey}`)
