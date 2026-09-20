@@ -27,15 +27,15 @@ export class ApiError extends Error {
 
 const authConfig = () => {
   const url = process.env.SUPABASE_URL
-  const anonKey = process.env.SUPABASE_ANON_KEY
-  if (!url || !anonKey) throw new ApiError(500, 'Supabase認証用の環境変数（SUPABASE_URL / SUPABASE_ANON_KEY）が設定されていません')
+  const anonKey = process.env.SUPABASE_PUBLISHABLE_KEY ?? process.env.SUPABASE_ANON_KEY
+  if (!url || !anonKey) throw new ApiError(500, 'Supabase認証用の環境変数（SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY または SUPABASE_ANON_KEY）が設定されていません')
   return { url: url.replace(/\/$/, ''), anonKey }
 }
 
 const dbConfig = () => {
   const { url, anonKey } = authConfig()
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-  if (!serviceRoleKey) throw new ApiError(500, 'Supabase DB用の環境変数（SUPABASE_SERVICE_ROLE_KEY）が設定されていません')
+  const serviceRoleKey = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!serviceRoleKey) throw new ApiError(500, 'Supabase DB用の環境変数（SUPABASE_SECRET_KEY または SUPABASE_SERVICE_ROLE_KEY）が設定されていません')
   return { url, anonKey, serviceRoleKey }
 }
 
