@@ -1,16 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { FormEvent, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { BottomNavigation } from './components/BottomNavigation'
 import { CalendarGrid } from './components/CalendarGrid'
 import { HabitCard } from './components/HabitCard'
 import { HabitForm } from './components/HabitForm'
 import { ProgressRing } from './components/ProgressRing'
-import { clearSession, createHabit, deleteHabit as deleteRemoteHabit, deleteRecord, fetchAppData, getStoredSession, resetUserData, saveSession, signIn, signUp, updateHabit as updateRemoteHabit, updateProfile, upsertRecord } from './api'
-import type { AuthSession, RemoteAppData } from './api'
-import type { AppView, FrequencyType, GoalUnit, Habit, HabitRecord } from './types'
+import type { AppView, Habit, HabitRecord } from './types'
 import { countThisWeek, formatJapaneseDate, formatShortDate, frequencyLabel, getLongestStreak, getMonday, getPeriodCompletionRate, getPeriodProgress, getStreak, getSuggestedReminderTime, getWeekdayCompletionRates, isDueToday, percentage, todayISO, toISODate } from './utils'
 
 const NOTIFICATION_HISTORY_KEY = 'habit-helper-notification-history-v1'
+const LOCAL_STATE_KEY = 'habit-helper-local-state-v1'
 const REMINDER_REPEAT_MINUTES = 60
 const MAX_REMINDER_NOTIFICATIONS = 4
 
@@ -31,14 +30,55 @@ const normalizeDisplayName = (value: unknown) => {
   return value.trim().slice(0, 20)
 }
 
+const createInitialState = (): StoredState => ({
+  habits: [],
+  records: [],
+  notificationsEnabled: false,
+  aiReflectionEnabled: true,
+  dailyGoal: DEFAULT_DAILY_GOAL,
+  displayName: DEFAULT_DISPLAY_NAME,
+})
+
+const readLocalState = (): StoredState => {
+  if (typeof window === 'undefined') return createInitialState()
+  try {
+    const raw = window.localStorage.getItem(LOCAL_STATE_KEY)
+    if (!raw) return createInitialState()
+    const parsed = JSON.parse(raw) as Partial<StoredState>
+    return {
+      habits: Array.isArray(parsed.habits) ? parsed.habits : [],
+      records: Array.isArray(parsed.records) ? parsed.records : [],
+      notificationsEnabled: parsed.notificationsEnabled === true,
+      aiReflectionEnabled: parsed.aiReflectionEnabled !== false,
+      dailyGoal: normalizeDailyGoal(parsed.dailyGoal),
+      displayName: normalizeDisplayName(parsed.displayName),
+    }
+  } catch {
+    return createInitialState()
+  }
+}
+
+const persistLocalState = (state: StoredState) => {
+  try {
+    window.localStorage.setItem(LOCAL_STATE_KEY, JSON.stringify(state))
+  } catch {
+    // Local storage is optional; the current session can continue in memory.
+  }
+}
+
+const createLocalId = (prefix: string) => {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `${prefix}-${crypto.randomUUID()}`
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
 const getNotificationPermission = (): NotificationPermission => {
   if (!('Notification' in window)) return 'unsupported'
   return window.Notification.permission
 }
 
-const readNotificationHistory = (userId: string) => {
+const readNotificationHistory = () => {
   try {
-    const stored = localStorage.getItem(`${NOTIFICATION_HISTORY_KEY}:${userId}`)
+    const stored = localStorage.getItem(NOTIFICATION_HISTORY_KEY)
     const parsed = stored ? JSON.parse(stored) : []
     return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : []
   } catch {
@@ -46,10 +86,10 @@ const readNotificationHistory = (userId: string) => {
   }
 }
 
-const rememberNotification = (userId: string, key: string) => {
-  const history = readNotificationHistory(userId).filter((item) => item !== key).slice(-199)
+const rememberNotification = (key: string) => {
+  const history = readNotificationHistory().filter((item) => item !== key).slice(-199)
   try {
-    localStorage.setItem(`${NOTIFICATION_HISTORY_KEY}:${userId}`, JSON.stringify([...history, key]))
+    localStorage.setItem(NOTIFICATION_HISTORY_KEY, JSON.stringify([...history, key]))
   } catch {
     // Notification history is optional; it only prevents duplicate reminders.
   }
@@ -60,25 +100,6 @@ const timeToMinutes = (time: string) => {
   if (!Number.isFinite(hours) || !Number.isFinite(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null
   return hours * 60 + minutes
 }
-
-const mapRemoteHabit = (row: Record<string, unknown>): Habit => ({
-  id: String(row.id),
-  name: String(row.name ?? ''),
-  icon: String(row.icon ?? '💧'),
-  frequencyType: String(row.frequency_type ?? 'daily') as FrequencyType,
-  targetPerWeek: typeof row.target_per_week === 'number' ? row.target_per_week : undefined,
-  targetPerMonth: typeof row.target_per_month === 'number' ? row.target_per_month : undefined,
-  targetValue: typeof row.target_value === 'number' ? row.target_value : undefined,
-  targetUnit: typeof row.target_unit === 'string' ? row.target_unit as GoalUnit : undefined,
-  selectedDays: Array.isArray(row.selected_days) ? row.selected_days as number[] : undefined,
-  reminderEnabled: row.reminder_enabled !== false,
-  reminderTime: String(row.reminder_time ?? '20:00'),
-  smartReminder: row.smart_reminder === true,
-  startDate: String(row.start_date),
-  endDate: typeof row.end_date === 'string' ? row.end_date : undefined,
-  createdAt: String(row.created_at),
-  tone: String(row.tone ?? 'mint') as Habit['tone'],
-})
 
 const getProgressInsights = (habits: Habit[], records: HabitRecord[], now = new Date()) => {
   const weekStart = getMonday(now)
@@ -105,11 +126,7 @@ const getProgressInsights = (habits: Habit[], records: HabitRecord[], now = new 
 }
 
 function App() {
-  const [session, setSession] = useState<AuthSession | null>(() => getStoredSession())
-  const [remoteUser, setRemoteUser] = useState<RemoteAppData['user'] | null>(null)
-  const [state, setState] = useState<StoredState | null>(null)
-  const [authLoading, setAuthLoading] = useState(true)
-  const [authError, setAuthError] = useState('')
+  const [state, setState] = useState<StoredState>(() => readLocalState())
   const [activeView, setActiveView] = useState<AppView>('home')
   const [selectedHabitId, setSelectedHabitId] = useState<string | null>(null)
   const [editingHabitId, setEditingHabitId] = useState<string | null>(null)
@@ -118,57 +135,25 @@ function App() {
   const [noteTarget, setNoteTarget] = useState<NoteTarget | null>(null)
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(getNotificationPermission)
 
-  const habits = state?.habits ?? []
-  const records = state?.records ?? []
+  const habits = state.habits
+  const records = state.records
   const today = todayISO()
   const dueHabits = useMemo(() => habits.filter((habit) => isDueToday(habit)), [habits])
   const completedToday = dueHabits.filter((habit) => records.some((record) => record.habitId === habit.id && record.completedDate === today)).length
-  const progress = percentage(completedToday, state?.dailyGoal ?? DEFAULT_DAILY_GOAL)
+  const progress = percentage(completedToday, state.dailyGoal)
 
   useEffect(() => {
-    if (!session) {
-      setState(null)
-      setRemoteUser(null)
-      setAuthLoading(false)
-      return
-    }
-    let cancelled = false
-    setAuthLoading(true)
-    fetchAppData(session)
-      .then((data) => {
-        if (cancelled) return
-        setRemoteUser(data.user)
-        setState({
-          habits: data.habits,
-          records: data.records,
-          notificationsEnabled: data.preferences.notificationsEnabled,
-          aiReflectionEnabled: data.preferences.aiReflectionEnabled,
-          dailyGoal: normalizeDailyGoal(data.preferences.dailyGoal),
-          displayName: normalizeDisplayName(data.user.name),
-        })
-        setAuthError('')
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return
-        clearSession()
-        setSession(null)
-        setState(null)
-        setAuthError(error instanceof Error ? error.message : 'ログインセッションを確認できませんでした')
-      })
-      .finally(() => {
-        if (!cancelled) setAuthLoading(false)
-      })
-    return () => { cancelled = true }
-  }, [session])
+    persistLocalState(state)
+  }, [state])
 
   useEffect(() => {
-    if (!session || !state || notificationPermission !== 'granted' || !state.notificationsEnabled) return
+    if (notificationPermission !== 'granted' || !state.notificationsEnabled) return
 
     const notifyDueHabits = () => {
       const now = new Date()
       const date = toISODate(now)
       const currentMinutes = now.getHours() * 60 + now.getMinutes()
-      const history = new Set(readNotificationHistory(session.user.id))
+      const history = new Set(readNotificationHistory())
 
       state.habits
         .filter((habit) => habit.reminderEnabled && habit.reminderTime && isDueToday(habit, now))
@@ -190,14 +175,14 @@ function App() {
             window.focus()
             notification.close()
           }
-          rememberNotification(session.user.id, key)
+          rememberNotification(key)
         })
     }
 
     notifyDueHabits()
     const timer = window.setInterval(notifyDueHabits, 15000)
     return () => window.clearInterval(timer)
-  }, [notificationPermission, session, state?.notificationsEnabled, state?.habits, state?.records])
+  }, [notificationPermission, state.notificationsEnabled, state.habits, state.records])
 
   useEffect(() => {
     if (!notice) return
@@ -228,7 +213,6 @@ function App() {
   }
 
   const toggleCompletion = async (habitId: string, date = today) => {
-    if (!session || !state) return
     if (date > today) {
       setNotice('未来の日付は記録できません')
       return
@@ -239,18 +223,11 @@ function App() {
       return
     }
     const existing = records.find((record) => record.habitId === habitId && record.completedDate === date)
-    try {
-      if (existing) {
-        await deleteRecord(session, habitId, date)
-        setState((current) => current ? { ...current, records: current.records.filter((record) => record.id !== existing.id) } : current)
-      } else {
-        const saved = await upsertRecord(session, { habitId, completedDate: date })
-        const nextRecord: HabitRecord = { id: String(saved.id), habitId, completedDate: date, createdAt: String(saved.created_at ?? new Date().toISOString()) }
-        setState((current) => current ? { ...current, records: [...current.records, nextRecord] } : current)
-      }
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : '記録の保存に失敗しました')
-      return
+    if (existing) {
+      setState((current) => ({ ...current, records: current.records.filter((record) => record.id !== existing.id) }))
+    } else {
+      const nextRecord: HabitRecord = { id: createLocalId('record'), habitId, completedDate: date, createdAt: new Date().toISOString() }
+      setState((current) => ({ ...current, records: [...current.records, nextRecord] }))
     }
     if (!existing && habit && date === today) {
       setCelebration({ name: habit.name, icon: habit.icon })
@@ -260,20 +237,14 @@ function App() {
   }
 
   const saveRecordNote = async (note: string, amount?: number) => {
-    if (!noteTarget || !session) return
+    if (!noteTarget) return
     const trimmedNote = note.trim().slice(0, 120)
-    try {
-      const saved = await upsertRecord(session, { habitId: noteTarget.habitId, completedDate: noteTarget.date, note: trimmedNote, amount })
-      setState((current) => current ? {
-        ...current,
-        records: current.records.map((record) => record.habitId === noteTarget.habitId && record.completedDate === noteTarget.date
-          ? { ...record, id: String(saved.id ?? record.id), note: trimmedNote || undefined, amount: amount && Number.isFinite(amount) ? amount : undefined }
-          : record),
-      } : current)
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'メモの保存に失敗しました')
-      return
-    }
+    setState((current) => ({
+      ...current,
+      records: current.records.map((record) => record.habitId === noteTarget.habitId && record.completedDate === noteTarget.date
+        ? { ...record, note: trimmedNote || undefined, amount: amount && Number.isFinite(amount) ? amount : undefined }
+        : record),
+    }))
     setNoteTarget(null)
     setNotice(trimmedNote ? '達成メモを保存しました' : '達成を記録しました')
   }
@@ -286,59 +257,40 @@ function App() {
   }
 
   const saveHabit = async (values: Omit<Habit, 'id' | 'createdAt'>) => {
-    if (!session || !state) return
-    try {
-      if (editingHabitId) {
-        const saved = await updateRemoteHabit(session, editingHabitId, values)
-        const updatedHabit = mapRemoteHabit(saved)
-        setState((current) => current ? { ...current, habits: current.habits.map((habit) => habit.id === editingHabitId ? updatedHabit : habit) } : current)
-        setSelectedHabitId(editingHabitId)
-        setEditingHabitId(null)
-        setActiveView('detail')
-        setNotice('習慣を更新しました')
-        return
-      }
-
-      const saved = await createHabit(session, values)
-      const newHabit = mapRemoteHabit(saved)
-      setState((current) => current ? { ...current, habits: [...current.habits, newHabit] } : current)
-      setActiveView('habits')
-      setNotice('新しい習慣を追加しました')
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : '習慣の保存に失敗しました')
+    if (editingHabitId) {
+      const updatedHabit = { ...values, id: editingHabitId, createdAt: habits.find((habit) => habit.id === editingHabitId)?.createdAt ?? new Date().toISOString() }
+      setState((current) => ({ ...current, habits: current.habits.map((habit) => habit.id === editingHabitId ? updatedHabit : habit) }))
+      setSelectedHabitId(editingHabitId)
+      setEditingHabitId(null)
+      setActiveView('detail')
+      setNotice('習慣を更新しました')
+      return
     }
+
+    const newHabit: Habit = { ...values, id: createLocalId('habit'), createdAt: new Date().toISOString() }
+    setState((current) => ({ ...current, habits: [...current.habits, newHabit] }))
+    setActiveView('habits')
+    setNotice('新しい習慣を追加しました')
   }
 
   const deleteHabit = async (habitId: string) => {
     const habit = habits.find((item) => item.id === habitId)
     if (!habit || !window.confirm(`「${habit.name}」を削除しますか？`)) return
-    if (!session) return
-    try {
-      await deleteRemoteHabit(session, habitId)
-      setState((current) => current ? {
-        ...current,
-        habits: current.habits.filter((item) => item.id !== habitId),
-        records: current.records.filter((record) => record.habitId !== habitId),
-      } : current)
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : '習慣の削除に失敗しました')
-      return
-    }
+    setState((current) => ({
+      ...current,
+      habits: current.habits.filter((item) => item.id !== habitId),
+      records: current.records.filter((record) => record.habitId !== habitId),
+    }))
     if (activeView === 'detail') setActiveView('habits')
     setSelectedHabitId(null)
     setNotice('習慣を削除しました')
   }
 
   const resetDemo = async () => {
-    if (!session || !window.confirm('自分の習慣と達成記録をすべて削除しますか？')) return
-    try {
-      await resetUserData(session)
-      setState((current) => current ? { ...current, habits: [], records: [] } : current)
-      setActiveView('home')
-      setNotice('自分のデータをリセットしました')
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'データのリセットに失敗しました')
-    }
+    if (!window.confirm('この端末に保存した習慣と達成記録をすべて削除しますか？')) return
+    setState((current) => ({ ...current, habits: [], records: [] }))
+    setActiveView('home')
+    setNotice('この端末のデータをリセットしました')
   }
 
   const enableNotifications = async () => {
@@ -350,9 +302,6 @@ function App() {
     setNotificationPermission(permission)
     if (permission === 'granted') {
       setState((current) => current ? { ...current, notificationsEnabled: true } : current)
-      if (session) {
-        try { await updateProfile(session, { notificationsEnabled: true }) } catch { setNotice('通知設定の保存に失敗しました') }
-      }
       setNotice('通知を有効にしました')
     } else if (permission === 'denied') {
       setNotice('通知がブロックされています。ブラウザの設定を確認してください')
@@ -361,30 +310,21 @@ function App() {
 
   const disableNotifications = async () => {
     setState((current) => current ? { ...current, notificationsEnabled: false } : current)
-    if (session) {
-      try { await updateProfile(session, { notificationsEnabled: false }) } catch { setNotice('通知設定の保存に失敗しました') }
-    }
     setNotice('通知を停止しました')
   }
 
   const updateDailyGoal = async (value: number) => {
-    if (!session) return
     const dailyGoal = normalizeDailyGoal(value)
     setState((current) => current ? { ...current, dailyGoal } : current)
-    try { await updateProfile(session, { dailyGoal }) } catch { setNotice('目標の保存に失敗しました') }
   }
 
   const updateDisplayName = async (value: string) => {
-    if (!session) return
     const displayName = value.slice(0, 20)
     setState((current) => current ? { ...current, displayName } : current)
-    try { await updateProfile(session, { displayName }) } catch { setNotice('表示名の保存に失敗しました') }
   }
 
   const updateAiReflection = async (enabled: boolean) => {
-    if (!session) return
     setState((current) => current ? { ...current, aiReflectionEnabled: enabled } : current)
-    try { await updateProfile(session, { aiReflectionEnabled: enabled }) } catch { setNotice('設定の保存に失敗しました') }
   }
 
   const sendTestNotification = () => {
@@ -399,17 +339,6 @@ function App() {
     }
     setNotice('テスト通知を送りました')
   }
-
-  const signOut = () => {
-    clearSession()
-    setSession(null)
-    setState(null)
-    setRemoteUser(null)
-    setActiveView('home')
-  }
-
-  if (authLoading) return <LoadingScreen />
-  if (!session || !state || !remoteUser) return <AuthView initialError={authError} onAuthenticated={(nextSession) => { saveSession(nextSession); setAuthError(''); setSession(nextSession) }} />
 
   const selectedHabit = habits.find((habit) => habit.id === selectedHabitId)
   const editingHabit = habits.find((habit) => habit.id === editingHabitId)
@@ -430,7 +359,7 @@ function App() {
           <SidebarLink icon="⚙" label="設定" active={activeView === 'settings'} onClick={() => navigate('settings')} />
         </nav>
         <div className="sidebar__footer">
-          <div className="demo-badge"><span /> クラウド保存中</div>
+          <div className="demo-badge"><span /> この端末に保存中</div>
         </div>
       </aside>
 
@@ -449,7 +378,7 @@ function App() {
         {activeView === 'stats' && <StatsView habits={habits} records={records} aiReflectionEnabled={state.aiReflectionEnabled} />}
         {activeView === 'create' && <PageFrame eyebrow={editingHabit ? 'EDIT HABIT' : 'NEW HABIT'} title={editingHabit ? '習慣を整える' : '新しい習慣をつくる'} description={editingHabit ? '今のあなたに合うように、いつでも調整できます。' : '続けたいことをひとつだけ。小さく始めるのがコツです。'}><HabitForm initialHabit={editingHabit} records={records} onSubmit={saveHabit} onCancel={() => editingHabit ? openDetail(editingHabit.id) : navigate('home')} /></PageFrame>}
         {activeView === 'detail' && selectedHabit && <DetailView habit={selectedHabit} records={records} onBack={() => navigate('habits')} onToggle={() => toggleCompletion(selectedHabit.id)} onToggleDate={(date) => toggleCompletion(selectedHabit.id, date)} onEdit={() => { setEditingHabitId(selectedHabit.id); setActiveView('create') }} onEditNote={(record) => openNoteEditor(selectedHabit.id, record.completedDate, record.note ?? '')} onDelete={() => deleteHabit(selectedHabit.id)} />}
-        {activeView === 'settings' && <SettingsView displayName={state.displayName} email={remoteUser.email} onDisplayNameChange={updateDisplayName} onReset={resetDemo} onSignOut={signOut} dailyGoal={state.dailyGoal} onDailyGoalChange={updateDailyGoal} notificationsEnabled={state.notificationsEnabled} aiReflectionEnabled={state.aiReflectionEnabled} notificationPermission={notificationPermission} onEnableNotifications={enableNotifications} onDisableNotifications={disableNotifications} onTestNotification={sendTestNotification} onAiReflectionChange={updateAiReflection} />}
+        {activeView === 'settings' && <SettingsView displayName={state.displayName} onDisplayNameChange={updateDisplayName} onReset={resetDemo} dailyGoal={state.dailyGoal} onDailyGoalChange={updateDailyGoal} notificationsEnabled={state.notificationsEnabled} aiReflectionEnabled={state.aiReflectionEnabled} notificationPermission={notificationPermission} onEnableNotifications={enableNotifications} onDisableNotifications={disableNotifications} onTestNotification={sendTestNotification} onAiReflectionChange={updateAiReflection} />}
 
         <BottomNavigation activeView={activeView} onNavigate={navigate} />
         {celebration && <CelebrationOverlay celebration={celebration} />}
@@ -569,10 +498,8 @@ function Stat({ label, value, accent }: { label: string; value: string; accent: 
 
 type SettingsViewProps = {
   displayName: string
-  email: string
   onDisplayNameChange: (value: string) => void
   onReset: () => void
-  onSignOut: () => void
   dailyGoal: number
   onDailyGoalChange: (value: number) => void
   notificationsEnabled: boolean
@@ -584,7 +511,7 @@ type SettingsViewProps = {
   onAiReflectionChange: (enabled: boolean) => void
 }
 
-function SettingsView({ displayName, email, onDisplayNameChange, onReset, onSignOut, dailyGoal, onDailyGoalChange, notificationsEnabled, aiReflectionEnabled, notificationPermission, onEnableNotifications, onDisableNotifications, onTestNotification, onAiReflectionChange }: SettingsViewProps) {
+function SettingsView({ displayName, onDisplayNameChange, onReset, dailyGoal, onDailyGoalChange, notificationsEnabled, aiReflectionEnabled, notificationPermission, onEnableNotifications, onDisableNotifications, onTestNotification, onAiReflectionChange }: SettingsViewProps) {
   const notificationDescription = notificationPermission === 'unsupported'
     ? 'このブラウザは通知に対応していません。'
     : notificationPermission === 'denied'
@@ -593,39 +520,41 @@ function SettingsView({ displayName, email, onDisplayNameChange, onReset, onSign
         ? '習慣ごとに設定した時間に通知します。'
         : '通知を許可すると、習慣の時間にお知らせします。'
 
-  return <PageFrame eyebrow="PREFERENCES" title="設定" description="Habit Helperをあなたのペースに合わせて整えます。"><div className="settings-card"><div className="settings-profile"><span className="profile-avatar profile-avatar--large">{displayName.slice(0, 1)}</span><div><strong>{displayName}さん</strong><span>{email}</span></div><span className="settings-status">クラウド保存中</span></div><div className="settings-row settings-row--name"><div><strong>表示名</strong><span>ホーム画面の挨拶に表示する名前です。</span></div><input className="name-input" type="text" value={displayName} maxLength={20} aria-label="表示名" onChange={(event) => onDisplayNameChange(event.target.value)} /></div><div className="settings-row"><div><strong>データについて</strong><span>習慣・記録・メモはログイン中のアカウントに保存されます。</span></div><span className="settings-row__arrow">›</span></div><div className="settings-row settings-row--goal"><div><strong>今日のリズムの目標</strong><span>進捗リングに表示する、1日の目標習慣数です。</span></div><label className="goal-control"><input className="goal-input" type="number" min="1" max="20" value={dailyGoal} onChange={(event) => onDailyGoalChange(Number(event.target.value))} /><span>習慣</span></label></div><div className="settings-row settings-row--notifications"><div><strong>習慣の通知</strong><span>{notificationDescription}</span></div><div className="notification-actions">{notificationsEnabled && notificationPermission === 'granted' ? <><button className="button button--ghost button--small" onClick={onDisableNotifications}>通知を停止</button><button className="button button--secondary button--small" onClick={onTestNotification}>テスト通知</button></> : <button className="button button--primary button--small" onClick={onEnableNotifications} disabled={notificationPermission === 'unsupported'}>通知を有効にする</button>}</div></div><p className="notification-note">通知はこの端末のブラウザ上で、アプリを開いている間に動作します。習慣ごとの時刻は習慣の編集画面から変更できます。通知時刻を過ぎても未完了の場合は、1時間おきに最大3回再通知します。</p><div className="settings-row settings-row--ai"><div><strong>AIによる振り返り</strong><span>記録データから達成率や曜日別の傾向を自動分析します。</span></div><label className="switch-control"><input type="checkbox" checked={aiReflectionEnabled} onChange={(event) => onAiReflectionChange(event.target.checked)} /><span className="switch-control__track" aria-hidden="true"><span /></span><span className="sr-only">AIによる振り返りを有効にする</span></label></div><div className="settings-row"><div><strong>ログイン中のアカウント</strong><span>{email}</span></div><button className="button button--ghost button--small" onClick={onSignOut}>ログアウト</button></div><button className="reset-button" onClick={onReset}>自分のデータをリセット</button></div></PageFrame>
-}
-
-function LoadingScreen() {
-  return <div className="auth-shell"><div className="auth-card auth-card--loading"><span className="brand-mark">hh</span><h1>Habit Helper</h1><p>ログイン情報を確認しています…</p></div></div>
-}
-
-function AuthView({ initialError, onAuthenticated }: { initialError: string; onAuthenticated: (session: AuthSession) => void }) {
-  const [mode, setMode] = useState<'login' | 'signup'>('login')
-  const [name, setName] = useState('')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState(initialError)
-  const [message, setMessage] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    setError('')
-    setMessage('')
-    setSubmitting(true)
-    try {
-      const result = mode === 'login' ? await signIn(email, password) : await signUp(email, password, name)
-      if (result.access_token) onAuthenticated(result)
-      else setMessage('確認メールを送信しました。メール内のリンクを開いてからログインしてください。')
-    } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : '認証に失敗しました')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return <div className="auth-shell"><div className="auth-card"><div className="auth-brand"><span className="brand-mark">hh</span><strong>Habit Helper</strong></div><span className="eyebrow">YOUR PRIVATE RHYTHM</span><h1>{mode === 'login' ? 'おかえりなさい。' : '習慣を始めよう。'}</h1><p className="auth-card__description">ログインすると、習慣・達成記録・メモをあなたのアカウントだけに保存できます。</p><form onSubmit={submit}>{mode === 'signup' && <label className="auth-field"><span>表示名</span><input type="text" value={name} maxLength={20} autoComplete="name" placeholder="例：さき" onChange={(event) => setName(event.target.value)} /></label>}<label className="auth-field"><span>メールアドレス</span><input type="email" required value={email} autoComplete="email" placeholder="you@example.com" onChange={(event) => setEmail(event.target.value)} /></label><label className="auth-field"><span>パスワード</span><input type="password" required minLength={6} value={password} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} placeholder="6文字以上" onChange={(event) => setPassword(event.target.value)} /></label>{error && <p className="auth-error" role="alert">{error}</p>}{message && <p className="auth-message" role="status">{message}</p>}<button className="button button--primary auth-submit" type="submit" disabled={submitting}>{submitting ? '処理中…' : mode === 'login' ? 'ログインする' : 'アカウントを作成'} <span aria-hidden="true">→</span></button></form><button className="auth-switch" type="button" onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); setMessage('') }}>{mode === 'login' ? 'アカウントを作成する' : 'ログイン画面に戻る'}</button><p className="auth-footnote">データはアカウント単位で分離され、他のユーザーからは見えません。</p></div></div>
+  return <PageFrame eyebrow="PREFERENCES" title="設定" description="Habit Helperをあなたのペースに合わせて整えます。">
+    <div className="settings-card">
+      <div className="settings-profile">
+        <span className="profile-avatar profile-avatar--large">{displayName.slice(0, 1)}</span>
+        <div><strong>{displayName}さん</strong><span>ログインなしで利用中</span></div>
+        <span className="settings-status">この端末に保存中</span>
+      </div>
+      <div className="settings-row settings-row--name">
+        <div><strong>表示名</strong><span>ホーム画面の挨拶に表示する名前です。</span></div>
+        <input className="name-input" type="text" value={displayName} maxLength={20} aria-label="表示名" onChange={(event) => onDisplayNameChange(event.target.value)} />
+      </div>
+      <div className="settings-row">
+        <div><strong>データについて</strong><span>習慣・記録・メモはこの端末のブラウザに保存されます。</span></div>
+        <span className="settings-row__arrow">›</span>
+      </div>
+      <div className="settings-row settings-row--goal">
+        <div><strong>今日のリズムの目標</strong><span>進捗リングに表示する、1日の目標習慣数です。</span></div>
+        <label className="goal-control"><input className="goal-input" type="number" min="1" max="20" value={dailyGoal} onChange={(event) => onDailyGoalChange(Number(event.target.value))} /><span>習慣</span></label>
+      </div>
+      <div className="settings-row settings-row--notifications">
+        <div><strong>習慣の通知</strong><span>{notificationDescription}</span></div>
+        <div className="notification-actions">{notificationsEnabled && notificationPermission === 'granted' ? <><button className="button button--ghost button--small" onClick={onDisableNotifications}>通知を停止</button><button className="button button--secondary button--small" onClick={onTestNotification}>テスト通知</button></> : <button className="button button--primary button--small" onClick={onEnableNotifications} disabled={notificationPermission === 'unsupported'}>通知を有効にする</button>}</div>
+      </div>
+      <p className="notification-note">通知はこの端末のブラウザ上で、アプリを開いている間に動作します。習慣ごとの時刻は習慣の編集画面から変更できます。通知時刻を過ぎても未完了の場合は、1時間おきに最大3回再通知します。</p>
+      <div className="settings-row settings-row--ai">
+        <div><strong>AIによる振り返り</strong><span>記録データから達成率や曜日別の傾向を自動分析します。</span></div>
+        <label className="switch-control"><input type="checkbox" checked={aiReflectionEnabled} onChange={(event) => onAiReflectionChange(event.target.checked)} /><span className="switch-control__track" aria-hidden="true"><span /></span><span className="sr-only">AIによる振り返りを有効にする</span></label>
+      </div>
+      <div className="settings-row">
+        <div><strong>保存場所</strong><span>この端末のブラウザに保存中です。ログインは必要ありません。</span></div>
+        <span className="settings-row__arrow">✓</span>
+      </div>
+      <button className="reset-button" onClick={onReset}>この端末のデータをリセット</button>
+    </div>
+  </PageFrame>
 }
 
 function EmptyHabits({ onAdd }: { onAdd: () => void }) {
