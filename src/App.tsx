@@ -5,7 +5,7 @@ import { CalendarGrid } from './components/CalendarGrid'
 import { HabitCard } from './components/HabitCard'
 import { HabitForm } from './components/HabitForm'
 import { ProgressRing } from './components/ProgressRing'
-import { clearSession, createHabit, deleteHabit as deleteRemoteHabit, deleteRecord, fetchAppData, getStoredSession, resetUserData, saveSession, signIn, signUp, updateHabit as updateRemoteHabit, updateProfile, upsertRecord } from './api'
+import { ApiRequestError, clearSession, createHabit, deleteHabit as deleteRemoteHabit, deleteRecord, fetchAppData, getCurrentAuthSession, getStoredSession, resetUserData, saveSession, signIn, signOut as signOutRemote, signUp, subscribeToAuthChanges, updateHabit as updateRemoteHabit, updateProfile, upsertRecord } from './api'
 import type { AuthSession, RemoteAppData } from './api'
 import type { AppView, FrequencyType, GoalUnit, Habit, HabitRecord } from './types'
 import { countThisWeek, formatJapaneseDate, formatShortDate, frequencyLabel, getLongestStreak, getMonday, getPeriodCompletionRate, getPeriodProgress, getStreak, getSuggestedReminderTime, getWeekdayCompletionRates, isDueToday, percentage, todayISO, toISODate } from './utils'
@@ -125,6 +125,41 @@ function App() {
   const completedToday = dueHabits.filter((habit) => records.some((record) => record.habitId === habit.id && record.completedDate === today)).length
   const progress = percentage(completedToday, state?.dailyGoal ?? DEFAULT_DAILY_GOAL)
 
+  const createAuthOnlyState = (nextSession: AuthSession): StoredState => ({
+    habits: [],
+    records: [],
+    notificationsEnabled: false,
+    aiReflectionEnabled: true,
+    dailyGoal: DEFAULT_DAILY_GOAL,
+    displayName: normalizeDisplayName(nextSession.user.user_metadata?.name),
+  })
+
+  useEffect(() => {
+    let cancelled = false
+    const unsubscribe = subscribeToAuthChanges((nextSession) => {
+      if (cancelled) return
+      setSession(nextSession)
+      if (!nextSession) {
+        setState(null)
+        setRemoteUser(null)
+      }
+    })
+    getCurrentAuthSession()
+      .then((currentSession) => {
+        if (!cancelled && currentSession) setSession(currentSession)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setAuthError(error instanceof Error ? error.message : 'Supabaseの接続設定を確認してください')
+      })
+      .finally(() => {
+        if (!cancelled && !getStoredSession()) setAuthLoading(false)
+      })
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
+
   useEffect(() => {
     if (!session) {
       setState(null)
@@ -150,10 +185,23 @@ function App() {
       })
       .catch((error: unknown) => {
         if (cancelled) return
-        clearSession()
-        setSession(null)
-        setState(null)
-        setAuthError(error instanceof Error ? error.message : 'ログインセッションを確認できませんでした')
+        if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403)) {
+          clearSession()
+          setSession(null)
+          setState(null)
+          setRemoteUser(null)
+          setAuthError(error.message)
+          return
+        }
+        const fallbackUser = {
+          id: session.user.id,
+          email: session.user.email ?? '',
+          name: normalizeDisplayName(session.user.user_metadata?.name),
+        }
+        setRemoteUser(fallbackUser)
+        setState(createAuthOnlyState(session))
+        setAuthError('')
+        setNotice('ログインは成功しました。DB設定後に習慣データを利用できます')
       })
       .finally(() => {
         if (!cancelled) setAuthLoading(false)
@@ -400,8 +448,12 @@ function App() {
     setNotice('テスト通知を送りました')
   }
 
-  const signOut = () => {
-    clearSession()
+  const signOut = async () => {
+    try {
+      await signOutRemote(session)
+    } catch {
+      clearSession()
+    }
     setSession(null)
     setState(null)
     setRemoteUser(null)
@@ -616,7 +668,7 @@ function AuthView({ initialError, onAuthenticated }: { initialError: string; onA
     setSubmitting(true)
     try {
       const result = mode === 'login' ? await signIn(email, password) : await signUp(email, password, name)
-      if (result.access_token) onAuthenticated(result)
+      if (result?.access_token) onAuthenticated(result)
       else setMessage('確認メールを送信しました。メール内のリンクを開いてからログインしてください。')
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : '認証に失敗しました')
