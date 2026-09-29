@@ -27,16 +27,18 @@ export class ApiError extends Error {
 
 const authConfig = () => {
   const url = process.env.SUPABASE_URL?.trim()
-  const anonKey = process.env.SUPABASE_PUBLISHABLE_KEY ?? process.env.SUPABASE_ANON_KEY
+  const anonKey = process.env.SUPABASE_PUBLISHABLE_KEY?.trim() || process.env.SUPABASE_ANON_KEY?.trim()
   if (!url || !anonKey) throw new ApiError(500, 'Supabase認証用の環境変数（SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY または SUPABASE_ANON_KEY）が設定されていません')
   return { url: url.replace(/\/$/, ''), anonKey }
 }
 
 const dbConfig = () => {
   const { url, anonKey } = authConfig()
-  const serviceRoleKey = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY
+  const secretKey = process.env.SUPABASE_SECRET_KEY?.trim()
+  const legacyServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()
+  const serviceRoleKey = secretKey || legacyServiceRoleKey
   if (!serviceRoleKey) throw new ApiError(500, 'Supabase DB用の環境変数（SUPABASE_SECRET_KEY または SUPABASE_SERVICE_ROLE_KEY）が設定されていません')
-  return { url, anonKey, serviceRoleKey }
+  return { url, anonKey, serviceRoleKey, isNewSecretKey: Boolean(secretKey) }
 }
 
 const getAuthorization = (req: ApiRequest) => {
@@ -49,12 +51,17 @@ export async function requireUser(req: ApiRequest, res: ApiResponse) {
   const authorization = getAuthorization(req)
   if (!authorization?.startsWith('Bearer ')) throw new ApiError(401, 'ログインが必要です')
 
-  const response = await fetch(`${url}/auth/v1/user`, {
-    headers: {
-      apikey: anonKey,
-      Authorization: authorization,
-    },
-  })
+  let response: Response
+  try {
+    response = await fetch(`${url}/auth/v1/user`, {
+      headers: {
+        apikey: anonKey,
+        Authorization: authorization,
+      },
+    })
+  } catch {
+    throw new ApiError(502, 'Supabaseへ接続できません。VercelのSUPABASE_URLが正しいか確認してください')
+  }
   if (!response.ok) throw new ApiError(401, 'ログインセッションが無効です')
   const user = await response.json() as AuthUser
   if (!user.id) throw new ApiError(401, 'ユーザーを確認できません')
@@ -74,23 +81,43 @@ export async function supabaseAuthRequest(path: string, body: unknown) {
     throw new ApiError(502, 'Supabaseへ接続できません。VercelのSUPABASE_URLが正しいか確認してください')
   }
   const payload = await response.json().catch(() => ({})) as Record<string, any>
-  if (!response.ok) throw new ApiError(response.status === 400 ? 400 : 401, payload.error_description ?? payload.msg ?? payload.message ?? '認証に失敗しました')
+  if (!response.ok) {
+    const code = String(payload.error ?? payload.code ?? '')
+    const message = payload.error_description ?? payload.msg ?? payload.message
+    if (code === 'invalid_credentials') throw new ApiError(400, 'メールアドレスまたはパスワードが正しくありません')
+    if (code === 'email_not_confirmed') throw new ApiError(400, '確認メールのリンクを開いてからログインしてください')
+    if (code === 'invalid_api_key' || response.status === 401 && /api.?key/i.test(String(message ?? ''))) {
+      throw new ApiError(502, 'SupabaseのAPIキーが正しくありません。VercelのSUPABASE_PUBLISHABLE_KEYを確認してください')
+    }
+    if (response.status >= 500) throw new ApiError(502, 'Supabase側でエラーが発生しました。時間をおいて再試行してください')
+    throw new ApiError(response.status === 400 ? 400 : 401, message ?? '認証に失敗しました')
+  }
   return payload
 }
 
 export async function dbRequest(path: string, init: RequestInit = {}) {
-  const { url, serviceRoleKey } = dbConfig()
+  const { url, serviceRoleKey, isNewSecretKey } = dbConfig()
   const headers = new Headers(init.headers)
   headers.set('apikey', serviceRoleKey)
-  headers.set('Authorization', `Bearer ${serviceRoleKey}`)
+  // 新しい sb_secret_* キーはJWTではないため、Authorizationへ入れるとInvalid JWTになります。
+  // 旧 service_role JWTだけは従来どおりBearerとしても送ります。
+  if (!isNewSecretKey) headers.set('Authorization', `Bearer ${serviceRoleKey}`)
   headers.set('Content-Type', 'application/json')
-  return fetch(`${url}/rest/v1/${path}`, { ...init, headers })
+  try {
+    return await fetch(`${url}/rest/v1/${path}`, { ...init, headers })
+  } catch {
+    throw new ApiError(502, 'Supabaseデータベースへ接続できません。VercelのSUPABASE_URLを確認してください')
+  }
 }
 
 export async function dbJson(path: string, init: RequestInit = {}) {
   const response = await dbRequest(path, init)
   const payload = await response.json().catch(() => null) as Record<string, any> | null
-  if (!response.ok) throw new ApiError(500, typeof payload?.message === 'string' ? payload.message : 'データベース操作に失敗しました')
+  if (!response.ok) {
+    const message = typeof payload?.message === 'string' ? payload.message : typeof payload?.hint === 'string' ? payload.hint : 'データベース操作に失敗しました'
+    const status = response.status === 401 || response.status === 403 ? response.status : 500
+    throw new ApiError(status, message)
+  }
   return payload
 }
 

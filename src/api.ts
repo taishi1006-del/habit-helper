@@ -20,7 +20,12 @@ const request = async <T>(path: string, session: AuthSession | null, init: Reque
   const headers = new Headers(init.headers)
   headers.set('Content-Type', 'application/json')
   if (session?.access_token) headers.set('Authorization', `Bearer ${session.access_token}`)
-  const response = await fetch(path, { ...init, headers })
+  let response: Response
+  try {
+    response = await fetch(path, { ...init, headers })
+  } catch {
+    throw new Error('通信に失敗しました。ネットワーク接続とVercelの設定を確認してください')
+  }
   const payload = await response.json().catch(() => null)
   if (response.status === 401 && session?.refresh_token && allowRefresh) {
     try {
