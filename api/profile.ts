@@ -11,7 +11,7 @@ export default async function handler(req: any, res: any) {
     if (typeof body.notificationsEnabled === 'boolean') updates.notifications_enabled = body.notificationsEnabled
     if (typeof body.aiReflectionEnabled === 'boolean') updates.ai_reflection_enabled = body.aiReflectionEnabled
     if (!Object.keys(updates).length) return res.status(400).json({ error: '更新内容がありません' })
-    const rows = await dbJson(`users?id=eq.${encodeURIComponent(user.id)}&select=id,name,email,daily_goal,notifications_enabled,ai_reflection_enabled`, { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify(updates) }) as Record<string, any>[]
+    const rows = await dbJson(`users?id=eq.${encodeURIComponent(user.id)}&select=id,name,email,daily_goal,notifications_enabled,ai_reflection_enabled`, { method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify(updates) }, user.accessToken) as Record<string, any>[]
     return res.status(200).json(rows[0] ?? {})
   } catch (error) {
     return sendError(res, error)

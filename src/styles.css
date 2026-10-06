@@ -133,6 +133,7 @@ h1, h2, h3, p { margin-top: 0; }
 
 .section-block { margin-top: 47px; }
 .today-section { margin-top: 0; }
+.today-progress { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
 .section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 15px; margin-bottom: 17px; }
 .section-heading h2 { margin: 6px 0 0; color: var(--ink); font-family: Manrope, sans-serif; font-size: 21px; letter-spacing: -.06em; }
 .today-section__actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
@@ -157,7 +158,8 @@ h1, h2, h3, p { margin-top: 0; }
 .habit-card__streak--week { color: var(--purple); }
 .habit-card__reminder { color: #8d91c8; }
 .habit-card__chevron { padding-left: 5px; color: #b6bebd; font-size: 21px; font-weight: 300; }
-.complete-button { display: inline-flex; align-items: center; justify-content: center; min-width: 81px; padding: 10px 12px; border: 1px solid #dedfe8; border-radius: 10px; background: white; color: #858c96; font-size: 10px; font-weight: 700; transition: .2s ease; white-space: nowrap; }
+.complete-button { display: inline-flex; align-items: center; justify-content: center; min-width: 81px; min-height: 44px; padding: 10px 12px; border: 1px solid #dedfe8; border-radius: 10px; background: white; color: #858c96; font-size: 12px; font-weight: 700; transition: .2s ease; white-space: nowrap; }
+.complete-button:disabled { cursor: default; opacity: .65; }
 .complete-button:hover { border-color: var(--purple); color: var(--purple); }
 .complete-button.is-complete { border-color: #b9dfc9; background: #e8f7ed; color: #55a57b; }
 .complete-button.is-complete span { font-size: 14px; margin-right: 3px; }
@@ -463,7 +465,7 @@ h1, h2, h3, p { margin-top: 0; }
   .habit-card__icon { width: 39px; height: 39px; border-radius: 11px; font-size: 18px; }
   .habit-card__meta { gap: 6px; }
   .habit-card__chevron { display: none; }
-  .complete-button { min-width: 72px; min-height: 44px; padding: 9px 7px; font-size: 9px; }
+  .complete-button { min-width: 72px; min-height: 44px; padding: 9px 7px; font-size: 12px; }
   .habit-card__manage { gap: 3px; }
   .habit-card__manage-button { min-height: 40px; padding: 7px 6px; font-size: 9px; }
   .reflection-row { grid-template-columns: 1fr; margin-top: 37px; }

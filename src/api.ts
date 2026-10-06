@@ -55,7 +55,7 @@ const request = async <T>(path: string, session: AuthSession | null, init: Reque
   try {
     response = await fetch(path, { ...init, headers })
   } catch {
-    throw new ApiRequestError(0, '通信に失敗しました。ネットワーク接続とVercelの設定を確認してください')
+    throw new ApiRequestError(0, 'アプリのAPIに接続できません。ネットワーク接続と、ローカルの場合は開発サーバーが起動しているか確認してください')
   }
   const payload = await response.json().catch(() => null)
   if (response.status === 401 && session?.refresh_token && allowRefresh) {
@@ -70,6 +70,7 @@ const request = async <T>(path: string, session: AuthSession | null, init: Reque
     }
   }
   if (!response.ok) throw new ApiRequestError(response.status, typeof payload?.error === 'string' ? payload.error : '通信に失敗しました')
+  if (response.status !== 204 && payload === null) throw new ApiRequestError(502, '保存APIから正しい応答がありません。開発サーバーまたはVercelのAPI設定を確認してください')
   return payload as T
 }
 
@@ -144,7 +145,7 @@ export const fetchAppData = (session: AuthSession) => request<RemoteAppData>('/a
 
 export const createHabit = (session: AuthSession, habit: Omit<Habit, 'id' | 'createdAt'>) => request<Record<string, unknown>>('/api/habits', session, { method: 'POST', body: JSON.stringify(habit) })
 
-export const updateHabit = (session: AuthSession, id: string, habit: Partial<Omit<Habit, 'id' | 'createdAt'>>) => request<Record<string, unknown>>(`/api/habits/${encodeURIComponent(id)}`, session, { method: 'PATCH', body: JSON.stringify(habit) })
+export const updateHabit = (session: AuthSession, id: string, habit: Partial<Omit<Habit, 'id' | 'createdAt'>>) => request<Record<string, unknown>>(`/api/habits/${encodeURIComponent(id)}`, session, { method: 'PATCH', body: JSON.stringify(habit, (_key, value) => value === undefined ? null : value) })
 
 export const deleteHabit = (session: AuthSession, id: string) => request<void>(`/api/habits/${encodeURIComponent(id)}`, session, { method: 'DELETE' })
 

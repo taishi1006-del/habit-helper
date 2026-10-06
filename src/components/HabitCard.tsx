@@ -1,18 +1,20 @@
 import type { Habit } from '../types'
-import { countThisMonth, countThisWeek, frequencyLabel, getScheduledDaysThisWeek, getStreak } from '../utils'
+import { countThisMonth, countThisWeek, frequencyLabel, getScheduledDaysThisWeek, getStreak, getStreakLabel } from '../utils'
 import type { HabitRecord } from '../types'
 
 type HabitCardProps = {
   habit: Habit
   records: HabitRecord[]
   completed: boolean
+  saving?: boolean
+  checkable?: boolean
   onToggle: () => void
   onOpen: () => void
   onEdit?: () => void
   onDelete?: () => void
 }
 
-export function HabitCard({ habit, records, completed, onToggle, onOpen, onEdit, onDelete }: HabitCardProps) {
+export function HabitCard({ habit, records, completed, saving = false, checkable = true, onToggle, onOpen, onEdit, onDelete }: HabitCardProps) {
   const streak = getStreak(habit, records)
   const weeklyCount = countThisWeek(habit.id, records)
   const weeklyGoal = habit.frequencyType === 'weekly' ? habit.targetPerWeek ?? 1 : getScheduledDaysThisWeek(habit)
@@ -28,16 +30,16 @@ export function HabitCard({ habit, records, completed, onToggle, onOpen, onEdit,
           <span className="habit-card__meta">
             <span>{frequencyLabel(habit.frequencyType, habit.targetPerWeek, habit.selectedDays, habit.targetPerMonth)}</span>
             {goalLabel && <span>{goalLabel}</span>}
-            <span className="habit-card__streak habit-card__streak--week">{habit.frequencyType === 'monthly' ? `今月 ${monthlyCount} / ${habit.targetPerMonth ?? 1}回` : `今週 ${weeklyCount} / ${weeklyGoal}日`}</span>
-            <span className="habit-card__streak">🔥 {streak}日継続</span>
+            <span className="habit-card__streak habit-card__streak--week">{habit.frequencyType === 'monthly' ? `今月 ${monthlyCount} / ${habit.targetPerMonth ?? 1}回` : `今週 ${weeklyCount} / ${weeklyGoal}${habit.frequencyType === 'weekly' ? '回' : '日'}`}</span>
+            <span className="habit-card__streak">🔥 {getStreakLabel(habit, streak)}</span>
             {habit.reminderEnabled && habit.reminderTime && <span className="habit-card__reminder">🔔 {habit.reminderTime}</span>}
             {habit.smartReminder && <span className="habit-card__reminder">✨ スマート通知</span>}
           </span>
         </span>
         <span className="habit-card__chevron" aria-hidden="true">›</span>
       </button>
-      <button className={`complete-button ${completed ? 'is-complete' : ''}`} onClick={onToggle}>
-        {completed ? <><span aria-hidden="true">✓</span> 完了</> : '完了にする'}
+      <button type="button" className={`complete-button ${completed ? 'is-complete' : ''}`} disabled={saving || (!checkable && !completed)} aria-pressed={completed} aria-busy={saving} aria-label={`${habit.name}：${saving ? '保存中' : completed ? '達成済み、取り消す' : checkable ? '未達成、完了にする' : '今日は対象外'}`} onClick={onToggle}>
+        {saving ? '保存中…' : completed ? <><span aria-hidden="true">✓</span> 完了</> : checkable ? '□ 完了' : '対象外'}
       </button>
       {(onEdit || onDelete) && <div className="habit-card__manage" aria-label={`${habit.name}の管理`}>
         {onEdit && <button type="button" className="habit-card__manage-button" onClick={onEdit} aria-label={`${habit.name}を編集`} title="編集">編集</button>}

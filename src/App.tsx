@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { BottomNavigation } from './components/BottomNavigation'
 import { CalendarGrid } from './components/CalendarGrid'
@@ -8,7 +8,7 @@ import { ProgressRing } from './components/ProgressRing'
 import { ApiRequestError, clearSession, createHabit, deleteHabit as deleteRemoteHabit, deleteRecord, fetchAppData, getCurrentAuthSession, getStoredSession, resetUserData, saveSession, signIn, signOut as signOutRemote, signUp, subscribeToAuthChanges, updateHabit as updateRemoteHabit, updateProfile, upsertRecord } from './api'
 import type { AuthSession, RemoteAppData } from './api'
 import type { AppView, FrequencyType, GoalUnit, Habit, HabitRecord } from './types'
-import { countThisWeek, formatJapaneseDate, formatShortDate, frequencyLabel, getLongestStreak, getMonday, getPeriodCompletionRate, getPeriodProgress, getStreak, getSuggestedReminderTime, getWeekdayCompletionRates, isDueToday, percentage, todayISO, toISODate } from './utils'
+import { countThisMonth, countThisWeek, formatJapaneseDate, formatShortDate, frequencyLabel, getLongestStreak, getMonday, getPeriodCompletionRate, getPeriodProgress, getStreak, getStreakLabel, getStreakUnit, getSuggestedReminderTime, getWeekdayCompletionRates, isDueToday, isScheduledOn, percentage, todayISO, toISODate } from './utils'
 
 const NOTIFICATION_HISTORY_KEY = 'habit-helper-notification-history-v1'
 const REMINDER_REPEAT_MINUTES = 60
@@ -86,8 +86,10 @@ const getProgressInsights = (habits: Habit[], records: HabitRecord[], now = new 
   previousWeekStart.setDate(previousWeekStart.getDate() - 7)
   const previousWeekEnd = new Date(weekStart)
   previousWeekEnd.setDate(previousWeekEnd.getDate() - 1)
-  const currentStreak = Math.max(0, ...habits.map((habit) => getStreak(habit, records)))
-  const longestStreak = Math.max(0, ...habits.map((habit) => getLongestStreak(habit, records)))
+  // Day-based summaries must not display weeks/months as a number of days.
+  const dayHabits = habits.filter((habit) => !habit.frequencyType || habit.frequencyType === 'daily' || habit.frequencyType === 'selected_days')
+  const currentStreak = Math.max(0, ...dayHabits.map((habit) => getStreak(habit, records, now)))
+  const longestStreak = Math.max(0, ...dayHabits.map((habit) => getLongestStreak(habit, records, now)))
   const weekProgress = getPeriodProgress(habits, records, weekStart, now)
   const previousWeekProgress = getPeriodProgress(habits, records, previousWeekStart, previousWeekEnd)
   const weekRate = weekProgress.rate
@@ -110,6 +112,13 @@ function App() {
   const [state, setState] = useState<StoredState | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [authError, setAuthError] = useState('')
+  const [dataError, setDataError] = useState('')
+  const [reloadData, setReloadData] = useState(0)
+  const ownerRef = useRef(session?.user.id ?? null)
+  const pendingRecords = useRef(new Set<string>())
+  const [savingRecords, setSavingRecords] = useState<string[]>([])
+  const habitSavePending = useRef(false)
+  const [savingHabit, setSavingHabit] = useState(false)
   const [activeView, setActiveView] = useState<AppView>('home')
   const [selectedHabitId, setSelectedHabitId] = useState<string | null>(null)
   const [editingHabitId, setEditingHabitId] = useState<string | null>(null)
@@ -120,33 +129,41 @@ function App() {
 
   const habits = state?.habits ?? []
   const records = state?.records ?? []
-  const today = todayISO()
-  const dueHabits = useMemo(() => habits.filter((habit) => isDueToday(habit)), [habits])
+  const [today, setToday] = useState(todayISO)
+  const dueHabits = useMemo(() => habits.filter((habit) => isDueToday(habit, new Date(`${today}T00:00:00`), records)), [habits, records, today])
   const completedToday = dueHabits.filter((habit) => records.some((record) => record.habitId === habit.id && record.completedDate === today)).length
-  const progress = percentage(completedToday, state?.dailyGoal ?? DEFAULT_DAILY_GOAL)
+  const progress = Math.min(100, percentage(completedToday, state?.dailyGoal ?? DEFAULT_DAILY_GOAL))
 
-  const createAuthOnlyState = (nextSession: AuthSession): StoredState => ({
-    habits: [],
-    records: [],
-    notificationsEnabled: false,
-    aiReflectionEnabled: true,
-    dailyGoal: DEFAULT_DAILY_GOAL,
-    displayName: normalizeDisplayName(nextSession.user.user_metadata?.name),
-  })
+  useEffect(() => {
+    const updateDate = () => setToday(todayISO())
+    const timer = window.setInterval(updateDate, 30000)
+    window.addEventListener('focus', updateDate)
+    document.addEventListener('visibilitychange', updateDate)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', updateDate)
+      document.removeEventListener('visibilitychange', updateDate)
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
     const unsubscribe = subscribeToAuthChanges((nextSession) => {
       if (cancelled) return
+      ownerRef.current = nextSession?.user.id ?? null
       setSession(nextSession)
       if (!nextSession) {
         setState(null)
         setRemoteUser(null)
+        setNoteTarget(null)
+        setCelebration(null)
+        setNotice('')
+        setActiveView('home')
       }
     })
     getCurrentAuthSession()
       .then((currentSession) => {
-        if (!cancelled && currentSession) setSession(currentSession)
+        if (!cancelled && currentSession) { ownerRef.current = currentSession.user.id; setSession(currentSession) }
       })
       .catch((error: unknown) => {
         if (!cancelled) setAuthError(error instanceof Error ? error.message : 'Supabaseの接続設定を確認してください')
@@ -165,13 +182,18 @@ function App() {
       setState(null)
       setRemoteUser(null)
       setAuthLoading(false)
+      setDataError('')
       return
     }
     let cancelled = false
     setAuthLoading(true)
+    setDataError('')
+    setState(null)
+    setRemoteUser(null)
     fetchAppData(session)
       .then((data) => {
         if (cancelled) return
+        if (data.user.id !== session.user.id) throw new Error('ログインユーザーとデータの所有者が一致しません。再ログインしてください')
         setRemoteUser(data.user)
         setState({
           habits: data.habits,
@@ -185,7 +207,8 @@ function App() {
       })
       .catch((error: unknown) => {
         if (cancelled) return
-        if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403)) {
+        if (error instanceof ApiRequestError && error.status === 401) {
+          ownerRef.current = null
           clearSession()
           setSession(null)
           setState(null)
@@ -193,24 +216,16 @@ function App() {
           setAuthError(error.message)
           return
         }
-        const fallbackUser = {
-          id: session.user.id,
-          email: session.user.email ?? '',
-          name: normalizeDisplayName(session.user.user_metadata?.name),
-        }
-        setRemoteUser(fallbackUser)
-        setState(createAuthOnlyState(session))
-        setAuthError('')
-        setNotice('ログインは成功しました。DB設定後に習慣データを利用できます')
+        setDataError(error instanceof Error ? error.message : '習慣データを読み込めませんでした')
       })
       .finally(() => {
         if (!cancelled) setAuthLoading(false)
       })
     return () => { cancelled = true }
-  }, [session])
+  }, [session, reloadData])
 
   useEffect(() => {
-    if (!session || !state || notificationPermission !== 'granted' || !state.notificationsEnabled) return
+    if (!session || !state || remoteUser?.id !== session.user.id || notificationPermission !== 'granted' || !state.notificationsEnabled) return
 
     const notifyDueHabits = () => {
       const now = new Date()
@@ -219,7 +234,7 @@ function App() {
       const history = new Set(readNotificationHistory(session.user.id))
 
       state.habits
-        .filter((habit) => habit.reminderEnabled && habit.reminderTime && isDueToday(habit, now))
+        .filter((habit) => habit.reminderEnabled && habit.reminderTime && isDueToday(habit, now, state.records))
         .filter((habit) => !state.records.some((record) => record.habitId === habit.id && record.completedDate === date))
         .forEach((habit) => {
           const reminderTime = habit.smartReminder ? getSuggestedReminderTime(habit.id, state.records) ?? habit.reminderTime : habit.reminderTime
@@ -245,7 +260,7 @@ function App() {
     notifyDueHabits()
     const timer = window.setInterval(notifyDueHabits, 15000)
     return () => window.clearInterval(timer)
-  }, [notificationPermission, session, state?.notificationsEnabled, state?.habits, state?.records])
+  }, [notificationPermission, session, remoteUser?.id, state?.notificationsEnabled, state?.habits, state?.records])
 
   useEffect(() => {
     if (!notice) return
@@ -275,43 +290,56 @@ function App() {
     setActiveView('create')
   }
 
-  const toggleCompletion = async (habitId: string, date = today) => {
+  const toggleCompletion = async (habitId: string, date = todayISO()) => {
     if (!session || !state) return
-    if (date > today) {
+    const currentToday = todayISO()
+    setToday(currentToday)
+    const owner = session.user.id
+    const key = `${owner}:${habitId}:${date}`
+    if (pendingRecords.current.has(key)) return
+    if (date > currentToday) {
       setNotice('未来の日付は記録できません')
       return
     }
     const habit = habits.find((item) => item.id === habitId)
-    if (habit && !isDueToday(habit, new Date(`${date}T00:00:00`))) {
+    if (!habit) return
+    const existing = records.find((record) => record.habitId === habitId && record.completedDate === date)
+    if (!existing && !isScheduledOn(habit, new Date(`${date}T00:00:00`))) {
       setNotice('この日は設定した実行日に含まれていません')
       return
     }
-    const existing = records.find((record) => record.habitId === habitId && record.completedDate === date)
+    pendingRecords.current.add(key)
+    setSavingRecords((current) => [...current, `${habitId}:${date}`])
     try {
       if (existing) {
         await deleteRecord(session, habitId, date)
-        setState((current) => current ? { ...current, records: current.records.filter((record) => record.id !== existing.id) } : current)
+        if (ownerRef.current !== owner) return
+        setState((current) => current ? { ...current, records: current.records.filter((record) => !(record.habitId === habitId && record.completedDate === date)) } : current)
       } else {
         const saved = await upsertRecord(session, { habitId, completedDate: date })
-        const nextRecord: HabitRecord = { id: String(saved.id), habitId, completedDate: date, createdAt: String(saved.created_at ?? new Date().toISOString()) }
-        setState((current) => current ? { ...current, records: [...current.records, nextRecord] } : current)
+        if (ownerRef.current !== owner) return
+        const nextRecord: HabitRecord = { id: String(saved.id), habitId, completedDate: date, note: typeof saved.memo === 'string' ? saved.memo : undefined, amount: typeof saved.amount === 'number' ? saved.amount : undefined, createdAt: String(saved.created_at ?? new Date().toISOString()) }
+        setState((current) => current ? { ...current, records: [...current.records.filter((record) => !(record.habitId === habitId && record.completedDate === date)), nextRecord] } : current)
       }
+      if (!existing && date === currentToday) {
+        setCelebration({ name: habit.name, icon: habit.icon })
+      }
+      setNotice(existing ? `${date === currentToday ? '今日' : formatShortDate(date)}の完了を取り消しました` : `${date === currentToday ? '今日' : formatShortDate(date)}の達成を記録しました ✓`)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '記録の保存に失敗しました')
-      return
+      if (ownerRef.current === owner) setNotice(error instanceof Error ? error.message : '記録の保存に失敗しました')
+    } finally {
+      pendingRecords.current.delete(key)
+      if (ownerRef.current === owner) setSavingRecords((current) => current.filter((item) => item !== `${habitId}:${date}`))
     }
-    if (!existing && habit && date === today) {
-      setCelebration({ name: habit.name, icon: habit.icon })
-      setNoteTarget({ habitId, date: today, name: habit.name, initialNote: '', targetValue: habit.targetValue, targetUnit: habit.targetUnit })
-    }
-    setNotice(existing ? `${date === today ? '今日' : formatShortDate(date)}の完了を取り消しました` : `${date === today ? '今日' : formatShortDate(date)}の達成を記録しました${date === today ? ' ✓ メモも残せます' : ''}`)
   }
 
   const saveRecordNote = async (note: string, amount?: number) => {
     if (!noteTarget || !session) return
+    const owner = session.user.id
     const trimmedNote = note.trim().slice(0, 120)
     try {
       const saved = await upsertRecord(session, { habitId: noteTarget.habitId, completedDate: noteTarget.date, note: trimmedNote, amount })
+      if (ownerRef.current !== owner) return
       setState((current) => current ? {
         ...current,
         records: current.records.map((record) => record.habitId === noteTarget.habitId && record.completedDate === noteTarget.date
@@ -319,7 +347,7 @@ function App() {
           : record),
       } : current)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'メモの保存に失敗しました')
+      if (ownerRef.current === owner) setNotice(error instanceof Error ? error.message : 'メモの保存に失敗しました')
       return
     }
     setNoteTarget(null)
@@ -334,10 +362,14 @@ function App() {
   }
 
   const saveHabit = async (values: Omit<Habit, 'id' | 'createdAt'>) => {
-    if (!session || !state) return
+    if (!session || !state || habitSavePending.current) return
+    const owner = session.user.id
+    habitSavePending.current = true
+    setSavingHabit(true)
     try {
       if (editingHabitId) {
         const saved = await updateRemoteHabit(session, editingHabitId, values)
+        if (ownerRef.current !== owner) return
         const updatedHabit = mapRemoteHabit(saved)
         setState((current) => current ? { ...current, habits: current.habits.map((habit) => habit.id === editingHabitId ? updatedHabit : habit) } : current)
         setSelectedHabitId(editingHabitId)
@@ -348,12 +380,16 @@ function App() {
       }
 
       const saved = await createHabit(session, values)
+      if (ownerRef.current !== owner) return
       const newHabit = mapRemoteHabit(saved)
       setState((current) => current ? { ...current, habits: [...current.habits, newHabit] } : current)
-      setActiveView('habits')
+      setActiveView('home')
       setNotice('新しい習慣を追加しました')
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '習慣の保存に失敗しました')
+      if (ownerRef.current === owner) setNotice(error instanceof Error ? error.message : '習慣の保存に失敗しました')
+    } finally {
+      habitSavePending.current = false
+      if (ownerRef.current === owner) setSavingHabit(false)
     }
   }
 
@@ -361,15 +397,17 @@ function App() {
     const habit = habits.find((item) => item.id === habitId)
     if (!habit || !window.confirm(`「${habit.name}」を削除しますか？`)) return
     if (!session) return
+    const owner = session.user.id
     try {
       await deleteRemoteHabit(session, habitId)
+      if (ownerRef.current !== owner) return
       setState((current) => current ? {
         ...current,
         habits: current.habits.filter((item) => item.id !== habitId),
         records: current.records.filter((record) => record.habitId !== habitId),
       } : current)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : '習慣の削除に失敗しました')
+      if (ownerRef.current === owner) setNotice(error instanceof Error ? error.message : '習慣の削除に失敗しました')
       return
     }
     if (activeView === 'detail') setActiveView('habits')
@@ -379,13 +417,15 @@ function App() {
 
   const resetDemo = async () => {
     if (!session || !window.confirm('自分の習慣と達成記録をすべて削除しますか？')) return
+    const owner = session.user.id
     try {
       await resetUserData(session)
+      if (ownerRef.current !== owner) return
       setState((current) => current ? { ...current, habits: [], records: [] } : current)
       setActiveView('home')
       setNotice('自分のデータをリセットしました')
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'データのリセットに失敗しました')
+      if (ownerRef.current === owner) setNotice(error instanceof Error ? error.message : 'データのリセットに失敗しました')
     }
   }
 
@@ -449,19 +489,31 @@ function App() {
   }
 
   const signOut = async () => {
-    try {
-      await signOutRemote(session)
-    } catch {
-      clearSession()
-    }
+    const previousSession = session
+    ownerRef.current = null
     setSession(null)
     setState(null)
     setRemoteUser(null)
+    setDataError('')
+    setNoteTarget(null)
+    setCelebration(null)
+    setNotice('')
+    setSavingRecords([])
+    setSavingHabit(false)
+    setSelectedHabitId(null)
+    setEditingHabitId(null)
     setActiveView('home')
+    try {
+      await signOutRemote(previousSession)
+    } catch {
+      clearSession()
+    }
   }
 
   if (authLoading) return <LoadingScreen />
-  if (!session || !state || !remoteUser) return <AuthView initialError={authError} onAuthenticated={(nextSession) => { saveSession(nextSession); setAuthError(''); setSession(nextSession) }} />
+  if (session && remoteUser && remoteUser.id !== session.user.id) return <LoadingScreen />
+  if (session && dataError) return <div className="auth-shell"><div className="auth-card"><span className="brand-mark">hh</span><h1>データを読み込めません</h1><p className="form-error" role="alert">{dataError}</p><div className="form-actions"><button className="button button--primary" onClick={() => setReloadData((value) => value + 1)}>再読み込み</button><button className="button button--ghost" onClick={signOut}>ログアウト</button></div></div></div>
+  if (!session || !state || !remoteUser) return <AuthView initialError={authError} onAuthenticated={(nextSession) => { ownerRef.current = nextSession.user.id; saveSession(nextSession); setAuthError(''); setSession(nextSession) }} />
 
   const selectedHabit = habits.find((habit) => habit.id === selectedHabitId)
   const editingHabit = habits.find((habit) => habit.id === editingHabitId)
@@ -496,11 +548,11 @@ function App() {
           </div>
         </header>
 
-        {activeView === 'home' && <HomeView habits={dueHabits} allHabits={habits} records={records} completedToday={completedToday} dailyGoal={state.dailyGoal} progress={progress} onToggle={toggleCompletion} onOpen={openDetail} onEdit={startEditingHabit} onDelete={deleteHabit} onAdd={() => navigate('create')} onViewAll={() => navigate('habits')} onViewStats={() => navigate('stats')} />}
-        {activeView === 'habits' && <HabitsView habits={habits} records={records} onToggle={toggleCompletion} onOpen={openDetail} onEdit={startEditingHabit} onDelete={deleteHabit} onAdd={() => navigate('create')} />}
+        {activeView === 'home' && <HomeView habits={dueHabits} allHabits={habits} records={records} savingRecords={savingRecords} completedToday={completedToday} dailyGoal={state.dailyGoal} progress={progress} onToggle={toggleCompletion} onOpen={openDetail} onEdit={startEditingHabit} onDelete={deleteHabit} onAdd={() => navigate('create')} onViewAll={() => navigate('habits')} onViewStats={() => navigate('stats')} />}
+        {activeView === 'habits' && <HabitsView habits={habits} records={records} savingRecords={savingRecords} onToggle={toggleCompletion} onOpen={openDetail} onEdit={startEditingHabit} onDelete={deleteHabit} onAdd={() => navigate('create')} />}
         {activeView === 'stats' && <StatsView habits={habits} records={records} aiReflectionEnabled={state.aiReflectionEnabled} />}
-        {activeView === 'create' && <PageFrame eyebrow={editingHabit ? 'EDIT HABIT' : 'NEW HABIT'} title={editingHabit ? '習慣を整える' : '新しい習慣をつくる'} description={editingHabit ? '今のあなたに合うように、いつでも調整できます。' : '続けたいことをひとつだけ。小さく始めるのがコツです。'}><HabitForm initialHabit={editingHabit} records={records} onSubmit={saveHabit} onCancel={() => editingHabit ? openDetail(editingHabit.id) : navigate('home')} /></PageFrame>}
-        {activeView === 'detail' && selectedHabit && <DetailView habit={selectedHabit} records={records} onBack={() => navigate('habits')} onToggle={() => toggleCompletion(selectedHabit.id)} onToggleDate={(date) => toggleCompletion(selectedHabit.id, date)} onEdit={() => { setEditingHabitId(selectedHabit.id); setActiveView('create') }} onEditNote={(record) => openNoteEditor(selectedHabit.id, record.completedDate, record.note ?? '')} onDelete={() => deleteHabit(selectedHabit.id)} />}
+        {activeView === 'create' && <PageFrame eyebrow={editingHabit ? 'EDIT HABIT' : 'NEW HABIT'} title={editingHabit ? '習慣を整える' : '新しい習慣をつくる'} description={editingHabit ? '今のあなたに合うように、いつでも調整できます。' : '続けたいことをひとつだけ。小さく始めるのがコツです。'}><HabitForm initialHabit={editingHabit} records={records} submitting={savingHabit} onSubmit={saveHabit} onCancel={() => editingHabit ? openDetail(editingHabit.id) : navigate('home')} /></PageFrame>}
+        {activeView === 'detail' && selectedHabit && <DetailView habit={selectedHabit} records={records} savingRecords={savingRecords} onBack={() => navigate('habits')} onToggle={() => toggleCompletion(selectedHabit.id)} onToggleDate={(date) => toggleCompletion(selectedHabit.id, date)} onEdit={() => { setEditingHabitId(selectedHabit.id); setActiveView('create') }} onEditNote={(record) => openNoteEditor(selectedHabit.id, record.completedDate, record.note ?? '')} onDelete={() => deleteHabit(selectedHabit.id)} />}
         {activeView === 'settings' && <SettingsView displayName={state.displayName} email={remoteUser.email} onDisplayNameChange={updateDisplayName} onReset={resetDemo} onSignOut={signOut} dailyGoal={state.dailyGoal} onDailyGoalChange={updateDailyGoal} notificationsEnabled={state.notificationsEnabled} aiReflectionEnabled={state.aiReflectionEnabled} notificationPermission={notificationPermission} onEnableNotifications={enableNotifications} onDisableNotifications={disableNotifications} onTestNotification={sendTestNotification} onAiReflectionChange={updateAiReflection} />}
 
         <BottomNavigation activeView={activeView} onNavigate={navigate} />
@@ -524,6 +576,7 @@ type HomeViewProps = {
   habits: Habit[]
   allHabits: Habit[]
   records: HabitRecord[]
+  savingRecords: string[]
   completedToday: number
   dailyGoal: number
   progress: number
@@ -536,8 +589,10 @@ type HomeViewProps = {
   onViewStats: () => void
 }
 
-function HomeView({ habits, allHabits, records, completedToday, dailyGoal, progress, onToggle, onOpen, onEdit, onDelete, onAdd, onViewAll, onViewStats }: HomeViewProps) {
-  const bestHabit = allHabits.slice().sort((a, b) => getStreak(b, records) - getStreak(a, records))[0]
+function HomeView({ habits, allHabits, records, savingRecords, completedToday, dailyGoal, progress, onToggle, onOpen, onEdit, onDelete, onAdd, onViewAll, onViewStats }: HomeViewProps) {
+  const allDone = habits.length > 0 && completedToday === habits.length
+  const preferredType = allHabits.some((habit) => habit.frequencyType === 'daily' || habit.frequencyType === 'selected_days') ? 'day' : allHabits.some((habit) => habit.frequencyType === 'weekly') ? 'weekly' : 'monthly'
+  const bestHabit = allHabits.filter((habit) => preferredType === 'day' ? habit.frequencyType === 'daily' || habit.frequencyType === 'selected_days' : habit.frequencyType === preferredType).sort((a, b) => getStreak(b, records) - getStreak(a, records))[0]
   const bestStreak = bestHabit ? getStreak(bestHabit, records) : 0
   const insights = getProgressInsights(allHabits, records)
 
@@ -545,24 +600,24 @@ function HomeView({ habits, allHabits, records, completedToday, dailyGoal, progr
     <div className="date-strip"><span className="date-strip__dot" aria-hidden="true" />今日 · {formatJapaneseDate()}</div>
 
     <section className="section-block today-section">
-      <div className="section-heading"><div><span className="eyebrow">FOR TODAY</span><h2>今日やること</h2></div><div className="today-section__actions"><button className="button button--primary button--small" onClick={onAdd}><span aria-hidden="true">＋</span> 習慣を追加</button><button className="text-button" onClick={onViewAll}>すべて見る <span aria-hidden="true">→</span></button></div></div>
+      <div className="section-heading"><div><span className="eyebrow">FOR TODAY</span><h2>今日の習慣</h2><p className="today-progress" role="status">今日 {completedToday} / {habits.length} 達成{allDone ? ' ✓ すべて完了' : ''}</p></div><div className="today-section__actions"><button className="button button--primary button--small" onClick={onAdd}><span aria-hidden="true">＋</span> 習慣を追加</button><button className="text-button" onClick={onViewAll}>すべて見る <span aria-hidden="true">→</span></button></div></div>
       <div className="habit-stack">
-        {habits.length === 0 ? <EmptyHabits onAdd={onAdd} /> : habits.map((habit) => <HabitCard key={habit.id} habit={habit} records={records} completed={records.some((record) => record.habitId === habit.id && record.completedDate === todayISO())} onToggle={() => onToggle(habit.id)} onOpen={() => onOpen(habit.id)} onEdit={() => onEdit(habit.id)} onDelete={() => onDelete(habit.id)} />)}
+        {habits.length === 0 ? <div className="empty-state"><h3>{allHabits.length ? '今日対象の習慣はありません' : '今日の習慣はまだありません'}</h3><p>{allHabits.length ? '実行曜日や週・月の目標に応じて、必要な習慣がここに表示されます。' : '習慣を追加して、小さく始めましょう。'}</p><button className="button button--primary" onClick={allHabits.length ? onViewAll : onAdd}>{allHabits.length ? 'すべての習慣を見る' : '習慣を追加'}</button></div> : habits.map((habit) => <HabitCard key={habit.id} habit={habit} records={records} saving={savingRecords.includes(`${habit.id}:${todayISO()}`)} completed={records.some((record) => record.habitId === habit.id && record.completedDate === todayISO())} onToggle={() => onToggle(habit.id)} onOpen={() => onOpen(habit.id)} onEdit={() => onEdit(habit.id)} onDelete={() => onDelete(habit.id)} />)}
       </div>
     </section>
 
-    <section className="streak-summary" aria-label={`続いている日数 ${bestStreak}日`}>
+    <section className="streak-summary" aria-label={bestHabit ? getStreakLabel(bestHabit, bestStreak) : 'ストリーク 0日'}>
       <span className="streak-summary__icon" aria-hidden="true">🔥</span>
       <div className="streak-summary__copy">
         <span className="eyebrow">YOUR STREAK</span>
-        <div className="streak-summary__value"><strong>{bestStreak}</strong><span>日続いています</span></div>
+        <div className="streak-summary__value"><strong>{bestStreak}</strong><span>{bestHabit ? getStreakUnit(bestHabit) : '日'}連続{bestHabit?.frequencyType === 'selected_days' ? '（対象日）' : ''}</span></div>
         <p>{bestStreak > 0 && bestHabit ? `「${bestHabit.name}」の記録` : '今日から小さく始めよう'}</p>
       </div>
       <span className="streak-summary__spark" aria-hidden="true">✦</span>
     </section>
 
     <section className="progress-panel">
-      <div className="progress-panel__copy"><span className="eyebrow eyebrow--light">TODAY'S PROGRESS</span><h2>今日のリズム</h2><p>{progress === 100 ? 'すべての習慣を達成しました。すてきです！' : 'ひとつずつ、できたことを積み重ねよう。'}</p><div className="progress-panel__count"><strong>{Math.min(completedToday, dailyGoal)}</strong><span> / {dailyGoal} habits</span></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div><span className="progress-panel__caption">{progress === 100 ? '今日の目標をクリア！' : `あと${Math.max(dailyGoal - completedToday, 0)}つで今日の目標達成`}</span></div>
+      <div className="progress-panel__copy"><span className="eyebrow eyebrow--light">TODAY'S PROGRESS</span><h2>今日のリズム</h2><p>{allDone ? '今日の習慣をすべて達成しました！' : 'ひとつずつ、できたことを積み重ねよう。'}</p><div className="progress-panel__count"><strong>{Math.min(completedToday, dailyGoal)}</strong><span> / {dailyGoal} habits</span></div><div className="progress-track"><span style={{ width: `${progress}%` }} /></div><span className="progress-panel__caption">{progress === 100 ? '今日の目標をクリア！' : `あと${Math.max(dailyGoal - completedToday, 0)}つで今日の目標達成`}</span></div>
       <ProgressRing completed={Math.min(completedToday, dailyGoal)} total={dailyGoal} />
       <span className="progress-spark progress-spark--one" /><span className="progress-spark progress-spark--two" /><span className="progress-spark progress-spark--three" />
     </section>
@@ -600,19 +655,34 @@ function StatsView({ habits, records, aiReflectionEnabled }: { habits: Habit[]; 
   </PageFrame>
 }
 
-function HabitsView({ habits, records, onToggle, onOpen, onEdit, onDelete, onAdd }: { habits: Habit[]; records: HabitRecord[]; onToggle: (id: string) => void; onOpen: (id: string) => void; onEdit: (id: string) => void; onDelete: (id: string) => void; onAdd: () => void }) {
-  return <PageFrame eyebrow="YOUR HABITS" title="自分の習慣" description="あなたが大切にしている、毎日の小さな約束。"><div className="list-toolbar"><span>{habits.length}個の習慣</span><button className="button button--primary button--small" onClick={onAdd}>＋ 追加する</button></div><div className="habit-grid">{habits.map((habit) => <HabitCard key={habit.id} habit={habit} records={records} completed={records.some((record) => record.habitId === habit.id && record.completedDate === todayISO())} onToggle={() => onToggle(habit.id)} onOpen={() => onOpen(habit.id)} onEdit={() => onEdit(habit.id)} onDelete={() => onDelete(habit.id)} />)}</div>{habits.length === 0 && <EmptyHabits onAdd={onAdd} />}</PageFrame>
+function HabitsView({ habits, records, savingRecords, onToggle, onOpen, onEdit, onDelete, onAdd }: { habits: Habit[]; records: HabitRecord[]; savingRecords: string[]; onToggle: (id: string) => void; onOpen: (id: string) => void; onEdit: (id: string) => void; onDelete: (id: string) => void; onAdd: () => void }) {
+  return <PageFrame eyebrow="YOUR HABITS" title="自分の習慣" description="あなたが大切にしている、毎日の小さな約束。"><div className="list-toolbar"><span>{habits.length}個の習慣</span><button className="button button--primary button--small" onClick={onAdd}>＋ 追加する</button></div><div className="habit-grid">{habits.map((habit) => <HabitCard key={habit.id} habit={habit} records={records} saving={savingRecords.includes(`${habit.id}:${todayISO()}`)} checkable={isDueToday(habit, new Date(), records)} completed={records.some((record) => record.habitId === habit.id && record.completedDate === todayISO())} onToggle={() => onToggle(habit.id)} onOpen={() => onOpen(habit.id)} onEdit={() => onEdit(habit.id)} onDelete={() => onDelete(habit.id)} />)}</div>{habits.length === 0 && <EmptyHabits onAdd={onAdd} />}</PageFrame>
 }
 
-function DetailView({ habit, records, onBack, onToggle, onToggleDate, onEdit, onEditNote, onDelete }: { habit: Habit; records: HabitRecord[]; onBack: () => void; onToggle: () => void; onToggleDate: (date: string) => void; onEdit: () => void; onEditNote: (record: HabitRecord) => void; onDelete: () => void }) {
+function DetailView({ habit, records, savingRecords, onBack, onToggle, onToggleDate, onEdit, onEditNote, onDelete }: { habit: Habit; records: HabitRecord[]; savingRecords: string[]; onBack: () => void; onToggle: () => void; onToggleDate: (date: string) => void; onEdit: () => void; onEditNote: (record: HabitRecord) => void; onDelete: () => void }) {
   const completedDates = new Set(records.filter((record) => record.habitId === habit.id).map((record) => record.completedDate))
-  const thisWeek = countThisWeek(habit.id, records)
   const streak = getStreak(habit, records)
   const last30 = Array.from({ length: 30 }, (_, index) => { const date = new Date(); date.setDate(date.getDate() - index); return date })
   const completedLast30 = last30.filter((date) => completedDates.has(toISODate(date))).length
-  const noteRecords = records.filter((record) => record.habitId === habit.id && record.note).slice().sort((a, b) => b.completedDate.localeCompare(a.completedDate))
+  const noteRecords = records.filter((record) => record.habitId === habit.id).slice().sort((a, b) => b.completedDate.localeCompare(a.completedDate))
+  const completed = completedDates.has(todayISO())
+  const saving = savingRecords.includes(`${habit.id}:${todayISO()}`)
+  const checkable = isDueToday(habit, new Date(), records)
 
-  return <div className="detail-view page-frame"><button className="back-button" onClick={onBack}>← <span>習慣一覧に戻る</span></button><section className={`detail-hero detail-hero--${habit.tone}`}><span className="detail-hero__icon">{habit.icon}</span><div><span className="eyebrow">HABIT DETAIL</span><h1>{habit.name}</h1><p>{frequencyLabel(habit.frequencyType, habit.targetPerWeek, habit.selectedDays, habit.targetPerMonth)}{habit.targetValue ? ` · 1日${habit.targetValue}${habit.targetUnit ?? '回'}` : ''} · {formatShortDate(habit.startDate)}から</p></div><button className={`detail-hero__action ${completedDates.has(todayISO()) ? 'is-complete' : ''}`} onClick={onToggle}>{completedDates.has(todayISO()) ? '✓ 今日達成' : '今日の完了'}</button></section><div className="stats-grid"><Stat label={habit.frequencyType === 'weekly' ? '今週の達成' : '現在のストリーク'} value={habit.frequencyType === 'weekly' ? `${thisWeek}/${habit.targetPerWeek}` : `${streak}日`} accent="purple" /><Stat label="過去30日の達成率" value={`${percentage(completedLast30, 30)}%`} accent="mint" /><Stat label="記録した日数" value={`${completedDates.size}日`} accent="peach" /></div><section className="detail-section"><div className="section-heading"><div><span className="eyebrow">YOUR RECORD</span><h2>達成カレンダー</h2></div><span className="calendar-legend"><i /> 達成</span></div><p className="calendar-hint">日付をタップして、過去の達成記録を修正できます。</p><CalendarGrid completedDates={completedDates} onToggleDate={onToggleDate} /></section><section className="detail-section detail-notes"><div className="section-heading"><div><span className="eyebrow">YOUR NOTES</span><h2>達成メモ</h2></div><span className="settings-soon">SHORT NOTES</span></div>{noteRecords.length ? <div className="note-list">{noteRecords.map((record) => <div className="note-item" key={record.id}><div><span>{formatShortDate(record.completedDate)}{record.amount ? ` · 実績${record.amount}${habit.targetUnit ?? ''}` : ''}</span><p>{record.note}</p></div><button className="text-button" onClick={() => onEditNote(record)}>編集</button></div>)}</div> : <p className="note-empty">完了したときに、短いメモを残せます。</p>}</section><div className="detail-actions"><button className="button button--secondary" onClick={onEdit}>✎ 編集する</button><button className="button button--danger" onClick={onDelete}>削除する</button></div></div>
+  return <div className="detail-view page-frame">
+    <button className="back-button" onClick={onBack}>← <span>習慣一覧に戻る</span></button>
+    <section className={`detail-hero detail-hero--${habit.tone}`}>
+      <span className="detail-hero__icon">{habit.icon}</span>
+      <div><span className="eyebrow">HABIT DETAIL</span><h1>{habit.name}</h1><p>{frequencyLabel(habit.frequencyType, habit.targetPerWeek, habit.selectedDays, habit.targetPerMonth)}{habit.targetValue ? ` · 1日${habit.targetValue}${habit.targetUnit ?? '回'}` : ''} · {formatShortDate(habit.startDate)}から</p></div>
+      <button className={`detail-hero__action ${completed ? 'is-complete' : ''}`} disabled={saving || (!completed && !checkable)} aria-pressed={completed} aria-busy={saving} onClick={onToggle}>{saving ? '保存中…' : completed ? '✓ 今日達成' : checkable ? '□ 今日の完了' : '今日は対象外'}</button>
+    </section>
+    <div className="stats-grid"><Stat label="現在のストリーク" value={getStreakLabel(habit, streak)} accent="purple" /><Stat label="過去30日の達成率" value={`${percentage(completedLast30, 30)}%`} accent="mint" /><Stat label="記録した日数" value={`${completedDates.size}日`} accent="peach" /></div>
+    {habit.frequencyType === 'weekly' && <p className="form-hint">今週 {countThisWeek(habit.id, records)} / {habit.targetPerWeek}回達成（月曜〜日曜）</p>}
+    {habit.frequencyType === 'monthly' && <p className="form-hint">今月 {countThisMonth(habit.id, records)} / {habit.targetPerMonth}回達成</p>}
+    <section className="detail-section"><div className="section-heading"><div><span className="eyebrow">YOUR RECORD</span><h2>達成カレンダー</h2></div><span className="calendar-legend"><i /> 達成</span></div><p className="calendar-hint">日付をタップして、過去の達成記録を修正できます。対象外の日はストリークに含めません。</p><CalendarGrid completedDates={completedDates} onToggleDate={onToggleDate} /></section>
+    <section className="detail-section detail-notes"><div className="section-heading"><div><span className="eyebrow">YOUR NOTES</span><h2>達成メモ</h2></div><span className="settings-soon">SHORT NOTES</span></div>{noteRecords.length ? <div className="note-list">{noteRecords.map((record) => <div className="note-item" key={record.id}><div><span>{formatShortDate(record.completedDate)}{record.amount ? ` · 実績${record.amount}${habit.targetUnit ?? ''}` : ''}</span><p>{record.note || 'メモはまだありません'}</p></div><button className="text-button" onClick={() => onEditNote(record)}>{record.note ? '編集' : 'メモを追加'}</button></div>)}</div> : <p className="note-empty">達成した日の短いメモを、ここから追加できます。</p>}</section>
+    <div className="detail-actions"><button className="button button--secondary" onClick={onEdit}>✎ 編集する</button><button className="button button--danger" onClick={onDelete}>削除する</button></div>
+  </div>
 }
 
 function Stat({ label, value, accent }: { label: string; value: string; accent: string }) {

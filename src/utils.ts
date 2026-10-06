@@ -39,12 +39,27 @@ export const getWeekDates = (date = new Date()) => {
   })
 }
 
-export const isDueToday = (habit: Habit, date = new Date()) => {
+// Schedule eligibility is separate from remaining weekly/monthly targets.
+export const isScheduledOn = (habit: Habit, date = new Date()) => {
   const isoDate = toISODate(date)
   if (isoDate < habit.startDate || (habit.endDate && isoDate > habit.endDate)) return false
-  if (habit.frequencyType === 'daily' || habit.frequencyType === 'weekly' || habit.frequencyType === 'monthly') return true
+  if (!habit.frequencyType || habit.frequencyType === 'daily' || habit.frequencyType === 'weekly' || habit.frequencyType === 'monthly') return true
   const weekday = date.getDay() === 0 ? 7 : date.getDay()
   return habit.selectedDays?.includes(weekday) ?? false
+}
+
+const countCompletedDates = (habitId: string, records: HabitRecord[], start: string, end: string) =>
+  new Set(records.filter((record) => record.habitId === habitId && record.completedDate >= start && record.completedDate <= end).map((record) => record.completedDate)).size
+
+export const isDueToday = (habit: Habit, date = new Date(), records: HabitRecord[] = []) => {
+  if (!isScheduledOn(habit, date)) return false
+  const today = toISODate(date)
+  // Keep today's checked item visible so it can be undone and counted in progress.
+  if (records.some((record) => record.habitId === habit.id && record.completedDate === today)) return true
+  const eligibleRecords = records.filter((record) => isScheduledOn(habit, new Date(`${record.completedDate}T00:00:00`)))
+  if (habit.frequencyType === 'weekly') return countThisWeek(habit.id, eligibleRecords, date) < (habit.targetPerWeek ?? 1)
+  if (habit.frequencyType === 'monthly') return countThisMonth(habit.id, eligibleRecords, date) < (habit.targetPerMonth ?? 1)
+  return true
 }
 
 export const frequencyLabel = (type: FrequencyType, targetPerWeek?: number, selectedDays?: number[], targetPerMonth?: number) => {
@@ -56,14 +71,13 @@ export const frequencyLabel = (type: FrequencyType, targetPerWeek?: number, sele
   return selectedDays?.map((day) => labels[day - 1]).join('・') || '曜日指定'
 }
 
-export const countThisWeek = (habitId: string, records: HabitRecord[]) => {
-  const week = new Set(getWeekDates())
-  return records.filter((record) => record.habitId === habitId && week.has(record.completedDate)).length
+export const countThisWeek = (habitId: string, records: HabitRecord[], date = new Date()) => {
+  return countCompletedDates(habitId, records, toISODate(getMonday(date)), toISODate(date))
 }
 
 export const countThisMonth = (habitId: string, records: HabitRecord[], date = new Date()) => {
   const prefix = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
-  return records.filter((record) => record.habitId === habitId && record.completedDate.startsWith(prefix)).length
+  return countCompletedDates(habitId, records, `${prefix}-01`, toISODate(date))
 }
 
 export const getSuggestedReminderTime = (habitId: string, records: HabitRecord[], date = new Date()) => {
@@ -82,29 +96,57 @@ export const getSuggestedReminderTime = (habitId: string, records: HabitRecord[]
   return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
 }
 
-export const countScheduledDays = (habit: Habit, dates: string[]) => dates.filter((date) => isDueToday(habit, new Date(`${date}T00:00:00`))).length
+export const countScheduledDays = (habit: Habit, dates: string[]) => dates.filter((date) => isScheduledOn(habit, new Date(`${date}T00:00:00`))).length
 
 export const getScheduledDaysThisWeek = (habit: Habit, date = new Date()) => countScheduledDays(habit, getWeekDates(date))
 
-export const getLongestStreak = (habit: Habit, records: HabitRecord[]) => {
-  const dates = records
-    .filter((record) => record.habitId === habit.id)
-    .map((record) => record.completedDate)
-    .sort()
-  if (!dates.length) return 0
-  let longest = 1
-  let current = 1
-  for (let index = 1; index < dates.length; index += 1) {
-    const previous = new Date(`${dates[index - 1]}T00:00:00`)
-    const next = new Date(`${dates[index]}T00:00:00`)
-    const difference = Math.round((next.getTime() - previous.getTime()) / 86400000)
-    if (difference === 1) {
-      current += 1
-      longest = Math.max(longest, current)
-    } else if (difference > 1) {
-      current = 1
-    }
+const streakDates = (habit: Habit, records: HabitRecord[], date: Date) =>
+  [...new Set(records.filter((record) => record.habitId === habit.id && record.completedDate <= toISODate(date) && isScheduledOn(habit, new Date(`${record.completedDate}T00:00:00`))).map((record) => record.completedDate))].sort()
+
+const previousScheduledDate = (habit: Habit, date: Date) => {
+  const cursor = new Date(date)
+  cursor.setDate(cursor.getDate() - 1)
+  // A selected-days schedule repeats every seven days; empty schedules are invalid.
+  for (let index = 0; index < 7 && toISODate(cursor) >= habit.startDate; index += 1) {
+    if (isScheduledOn(habit, cursor)) return toISODate(cursor)
+    cursor.setDate(cursor.getDate() - 1)
   }
+  return null
+}
+
+const periodStart = (habit: Habit, date: Date) => habit.frequencyType === 'weekly'
+  ? getMonday(date)
+  : new Date(date.getFullYear(), date.getMonth(), 1)
+
+const previousPeriod = (habit: Habit, date: Date) => {
+  const cursor = new Date(date)
+  if (habit.frequencyType === 'weekly') cursor.setDate(cursor.getDate() - 7)
+  else cursor.setMonth(cursor.getMonth() - 1, 1)
+  return cursor
+}
+
+const achievedPeriods = (habit: Habit, dates: string[]) => {
+  const counts = new Map<string, number>()
+  dates.forEach((date) => {
+    const key = toISODate(periodStart(habit, new Date(`${date}T00:00:00`)))
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  })
+  const target = habit.frequencyType === 'weekly' ? habit.targetPerWeek ?? 1 : habit.targetPerMonth ?? 1
+  return new Set([...counts].filter(([, count]) => count >= target).map(([key]) => key))
+}
+
+export const getLongestStreak = (habit: Habit, records: HabitRecord[], date = new Date()) => {
+  const dates = streakDates(habit, records, date)
+  const periodBased = habit.frequencyType === 'weekly' || habit.frequencyType === 'monthly'
+  const entries = periodBased ? [...achievedPeriods(habit, dates)].sort() : dates
+  let longest = 0
+  let current = 0
+  entries.forEach((entry, index) => {
+    const cursor = new Date(`${entry}T00:00:00`)
+    const previous = periodBased ? toISODate(previousPeriod(habit, cursor)) : previousScheduledDate(habit, cursor)
+    current = index > 0 && previous === entries[index - 1] ? current + 1 : 1
+    longest = Math.max(longest, current)
+  })
   return longest
 }
 
@@ -154,17 +196,41 @@ export const getWeekdayCompletionRates = (habits: Habit[], records: HabitRecord[
   })
 }
 
-export const getStreak = (habit: Habit, records: HabitRecord[]) => {
-  const recordDates = new Set(records.filter((record) => record.habitId === habit.id).map((record) => record.completedDate))
+export const getStreak = (habit: Habit, records: HabitRecord[], date = new Date()) => {
+  const today = toISODate(date)
+  if (today < habit.startDate) return 0
+  if (habit.frequencyType === 'selected_days' && !habit.selectedDays?.length) return 0
+  const dates = streakDates(habit, records, date)
+  const recordDates = new Set(dates)
   let streak = 0
-  const cursor = new Date()
-
-  while (recordDates.has(toISODate(cursor))) {
+  const lastDate = habit.endDate && habit.endDate < today ? habit.endDate : today
+  if (habit.frequencyType === 'weekly' || habit.frequencyType === 'monthly') {
+    const achieved = achievedPeriods(habit, dates)
+    let cursor = periodStart(habit, new Date(`${lastDate}T00:00:00`))
+    const firstPeriod = toISODate(periodStart(habit, new Date(`${habit.startDate}T00:00:00`)))
+    // An unfinished current period is still in progress, not a failure.
+    if (lastDate === today && !achieved.has(toISODate(cursor))) cursor = previousPeriod(habit, cursor)
+    while (toISODate(cursor) >= firstPeriod && achieved.has(toISODate(cursor))) {
+      streak += 1
+      cursor = previousPeriod(habit, cursor)
+    }
+    return streak
+  }
+  const cursor = new Date(`${lastDate}T00:00:00`)
+  // Today's deadline has not passed. Keep the streak until a scheduled day is missed.
+  if (lastDate === today && !recordDates.has(today)) cursor.setDate(cursor.getDate() - 1)
+  while (toISODate(cursor) >= habit.startDate) {
+    if (!isScheduledOn(habit, cursor)) { cursor.setDate(cursor.getDate() - 1); continue }
+    if (!recordDates.has(toISODate(cursor))) break
     streak += 1
     cursor.setDate(cursor.getDate() - 1)
   }
   return streak
 }
+
+export const getStreakUnit = (habit: Habit) => habit.frequencyType === 'weekly' ? '週' : habit.frequencyType === 'monthly' ? 'か月' : habit.frequencyType === 'selected_days' ? '回' : '日'
+
+export const getStreakLabel = (habit: Habit, count: number) => `${count}${getStreakUnit(habit)}連続${habit.frequencyType === 'selected_days' ? '（対象日）' : ''}`
 
 export const percentage = (completed: number, total: number) => {
   if (!total) return 0
